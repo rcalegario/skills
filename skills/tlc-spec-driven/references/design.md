@@ -51,7 +51,7 @@ Overview of how components interact, drawn in mermaid: a `sequenceDiagram` for a
 
 **Where the rules run.** Every rule that changes what a user sees - a state, a total, a count, filtering, searching, sorting - runs in a layer the repo's tests reach, as its `AGENTS.md` or test docs say. Filtering, searching, sorting and counting are rules, not presentation: put in the browser, they ship with no test behind them.
 
-**Show the shape.** When the architecture has a flow, a component structure or a data flow that is not trivial, put one visual in `## Architecture Overview` or the component's section - a call tree, component tree, file tree or Mermaid diagram - and present the same one when you ask for approval. Only where it is shorter than the text it replaces; see `show-me` in [Companion skills](../SKILL.md#companion-skills).
+**Show the shape.** When the architecture has a flow, a component structure or a data flow that is not trivial, put one visual in `## Architecture Overview` or the component's section - a call tree, component tree, file tree or Mermaid diagram - and present the same one when you ask for approval. Only where it is shorter than the text it replaces; see show me in [Companion skills](../SKILL.md#companion-skills).
 
 ### 3. Identify Code Reuse
 

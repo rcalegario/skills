@@ -1,5 +1,14 @@
 # Local modifications to tlc-spec-driven
 
+## Where this lives (read first)
+
+- **Real folder:** `~/.skills-manager/skills/tlc-spec-driven` - the skills-manager store. It holds the `.git` of this fork.
+- `~/.claude/skills/tlc-spec-driven` is a **symlink** to it. The manager replaced the real folder with that link (2026-11-08, when `show-me` was installed) and the `.git` that lived there was lost. Edit and commit in the store path; never rely on a `.git` under `~/.claude/skills`.
+- The manager can replace the folder again on an install, update or deploy. After any manager action, run `git -C ~/.skills-manager/skills/tlc-spec-driven status`; if it is not a repository, restore it: `git clone ~/.claude/skills-backups/tlc-spec-driven.bundle <tmp>`, then copy `<tmp>/.git` into the store folder and `git checkout main`.
+- Backup bundle: `~/.claude/skills-backups/tlc-spec-driven.bundle` (refresh with `git bundle create <that path> --all` after meaningful commits).
+- The manager has this skill as an `import` with no upstream URL, so it never fetches updates. Updates come from `tech-leads-club/agent-skills`, folder `packages/skills-catalog/skills/(development)/tlc-spec-driven`, and are merged by hand.
+- `.skill-meta.json` and `__pycache__` are git-ignored; the manager's content hash in its database goes stale after our commits and does not matter.
+
 Base: upstream 4.1.0 (`upstream-4.1.0`). Update procedure:
 1. Put the new upstream tree on branch `upstream` and tag it `upstream-<version>`.
 2. `git merge upstream` into `main`; conflicts land exactly on the lines below.
@@ -19,7 +28,8 @@ The previous version (3.x + our edits) is kept on branch `local-mods`. A bundle 
 | Gate Build is one row: build + lint + all tests | `implement.md` said "lint only", `tasks.md` said "all tests" | `references/implement.md` |
 | `tasks.md` template fenced with four backticks | The inner diagram fence closed the template early, so the rest leaked into projects' tasks.md | `references/tasks.md` |
 | Size limits in words (spec ≲3k, design ≲5k, tasks ≲6k, `wc -w`) | The agent can count words, not tokens | `SKILL.md` |
-| Grill by scope (Small never, Medium on a yes, Large/Complex by default) and `show-me` for explanations and documents, both optional | Stress-test specs before approval; explain with visuals | `SKILL.md` §Companion skills, `references/discuss.md`, `references/specify.md`, `references/design.md` |
+| Grill by scope (Small never, Medium on a yes, Large/Complex by default); `grilling` is an optional external skill | Stress-test specs before approval | `SKILL.md` §Companion skills, `references/discuss.md`, `references/specify.md` |
+| Show me: a copy of Dex Horthy's `show-me` (MIT) inside the skill, used for explanations and documents. The upstream skill is user-invoked only, so it is copied, not loaded; re-copy when upstream changes (pinned blob in the file header) | Explain with visuals, and do not depend on a skill the model cannot load | `references/show-me.md`, `SKILL.md` §Companion skills, `references/design.md` |
 
 ## Dropped (upstream 4.x replaced them)
 

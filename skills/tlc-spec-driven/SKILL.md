@@ -170,7 +170,7 @@ Never load several feature specs or several architecture docs at once.
 
 ## Companion skills
 
-Both are optional. Without them the phase runs with the plain fallback written here.
+`grilling` is an optional skill: without it the phase runs with the plain fallback written here. Show me ships inside this skill.
 
 **`grilling` - stress-test the spec before it is approved.**
 
@@ -182,7 +182,7 @@ Both are optional. Without them the phase runs with the plain fallback written h
 
 Load `grilling` and let it drive. Bound its questions to this feature's gray areas, criteria and Out of Scope; technical architecture stays out - that is Design's job - and the scope guardrail in [discuss.md](references/discuss.md) still holds. Each answer goes into the spec in the turn it arrives (a criterion, an Assumptions row, an `AD-NNN`, or `context.md`). When its frontier is empty, return to Specify. Without the skill: one question per turn, your recommended answer first, in dependency order.
 
-**`show-me` - explain with the smallest visual that makes the point.** Use it in conversation: the options of a gray area, the summary you present before an approval (spec, design, tasks), an explanation the user asks for. In the documents, only where a visual is shorter than the text it replaces: `design.md` for a flow, a component structure or a data flow that is not trivial; `spec.md` only for a flow or state machine its criteria cannot state in a line. One visual per section; a call tree, component tree, file tree or Mermaid diagram; never an HTML page inside a feature document. `show-me` is user-invoked: load it with the Skill tool and, if the harness refuses, read its `SKILL.md` from the skills directory and follow it. Without it, write the same sketches by hand.
+**Show me - explain with the smallest visual that makes the point.** Use it in conversation: the options of a gray area, the summary you present before an approval (spec, design, tasks), an explanation the user asks for. In the documents, only where a visual is shorter than the text it replaces: `design.md` for a flow, a component structure or a data flow that is not trivial; `spec.md` only for a flow or state machine its criteria cannot state in a line. One visual per section; a call tree, component tree, file tree or Mermaid diagram; never an HTML page inside a feature document. The menu of visuals and where each fits: [show-me.md](references/show-me.md) - read it before the first visual.
 
 ## Knowledge
 

@@ -155,7 +155,7 @@ Fix inline. This gate is bounded to THIS feature's stated dimensions and actual 
 
 **Grill before approval, by scope.** Large and Complex specs were grilled during discuss; a Medium spec is offered one line - "Want me to grill this spec first?" - and grilled on a yes; a Small one is not. Rules and fallback: [Companion skills](../SKILL.md#companion-skills). Fold what the grill settles into the spec, then run `validate_spec.py` again.
 
-**Then present the spec and stop.** When the spec holds a flow or a state machine, open the summary with a `show-me` sketch of it. Approval of the spec is a stop for a human: lead with the questions that block, then the defaults you picked for the user to correct.
+**Then present the spec and stop.** When the spec holds a flow or a state machine, open the summary with a show-me sketch of it. Approval of the spec is a stop for a human: lead with the questions that block, then the defaults you picked for the user to correct.
 
 Each answer goes into the spec in the turn it arrives - a criterion, an Assumptions row with `y`, or an `AD-NNN` for a departure - not at the end of the conversation. When the user approves, write `**Approved**: <YYYY-MM-DD> - user: "<their words>"` under the title. An approval the user did not give is never written; `validate_tasks.py --execute` refuses to start without it.
 
