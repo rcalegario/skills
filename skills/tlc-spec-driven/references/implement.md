@@ -131,8 +131,7 @@ Run the gate check command from the task definition. This is MANDATORY - not "if
 | -------------------------------- | ---------- | ------------------------ |
 | Unit tests only                  | Quick      | Unit test command        |
 | E2E or integration tests         | Full       | Unit + E2E commands      |
-| Last task in a phase             | Build      | Build + lint + all tests |
-| No tests (config, entities, etc) | Build      | Build + lint only        |
+| Last task in a phase, or no tests (config, entities, etc) | Build | Build + lint + all tests |
 
 The gate check is deterministic. The test runner decides if the code is correct,
 not the agent's self-assessment.
@@ -236,7 +235,7 @@ When the last task of the feature is committed, the orchestrator - never a batch
 2. **Dispatch two fresh sub-agents in parallel, over the same `HEAD`:** the **Verifier** with [validate.md](validate.md), and when a criterion cites a capture, the **screens sub-agent** with [verify-screens.md](verify-screens.md). Author ≠ verifier: neither is the author, and neither fixes anything. Write both on the `**Dispatched:**` line of tasks.md `## Handoff` before sending them, with the `HEAD`, and mark each `returned` when it does.
 3. **Fix every finding in one pass,** each closed by a commit the report's `Closed` column cites.
 4. **Round 2 is the script:** `check_proofs.py <feature>` again over the fixes, and the screens sub-agent again on the rows that read `differs` only, which writes `**Round**: 2`. There is no second Verifier and no third round. What still fails goes to the user.
-5. **Gate:** `python3 <skill-dir>/scripts/validate_verification.py <feature>` exits 0, then distill lessons ([lessons.md](lessons.md)). Close only when every sub-agent you dispatched has returned.
+5. **Gate:** `python3 <skill-dir>/scripts/validate_verification.py <feature>` exits 0, regenerate the feature index (`python3 <skill-dir>/scripts/index.py features`), then distill lessons ([lessons.md](lessons.md)). Close only when every sub-agent you dispatched has returned.
 
 ## Execution Template
 
@@ -309,8 +308,4 @@ When the last task of the feature is committed, the orchestrator - never a batch
 When work is interrupted, paused, or a session ends before the feature is complete:
 
 1. Open `.specs/STATE.md`.
-2. Locate the `## Handoff` section.
-3. **Replace only that section's body** with the current snapshot (feature, phase/task, completed, in-progress `file:line`, next step, blockers, uncommitted files, branch). See [memory.md](memory.md) for the exact format.
-4. Do NOT touch the `## Decisions` section above it - decisions are written only during Design.
-
-**Section-scoped write (critical):** Replace the content between the `## Handoff` header and the next `##` header (or end of file). Never overwrite the full file - doing so silently destroys the Decisions log.
+2. **Replace the body of `## Handoff`** with the current snapshot (feature, phase/task, completed, in-progress `file:line`, next step, blockers, uncommitted files, branch). See [memory.md](memory.md) for the exact format.

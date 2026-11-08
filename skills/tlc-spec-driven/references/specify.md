@@ -24,6 +24,19 @@ The canonical rubric for requirements that are easy to miss. Referenced by [disc
 
 ## Process
 
+### 0. Feature folder, milestone and feature code
+
+Every feature folder is `.specs/features/m<N>.f<N>.<slug>/` (lowercase, kebab-case slug). Examples: `m2.f1.tags-api`, `m2.f2.tags-screen`.
+
+- **`m<N>` is the milestone**: a large cut that delivers value to the user, taken from the project's `ROADMAP.md` (`.specs/ROADMAP.md`, then `.specs/project/ROADMAP.md`).
+- **`f<N>` is a feature inside the milestone**: smaller, and not necessarily a vertical slice - it can be a back/front split or a layer. The number restarts at `f1` in every milestone.
+- **The slug sums up the feature** in a few words.
+- **Read the feature index first:** run `python3 <skill-dir>/scripts/index.py features --check`; if it reports stale, run `index.py features`, then read `.specs/features/AGENTS.md`. See what exists, avoid duplicating a feature, and take the next free `f<N>` of the milestone. Open a feature folder only when its row is relevant.
+- **No roadmap, or the work is not in it:** ask the user for the milestone. Never invent one.
+- **Legacy folders** (`m4-slug`, `m4.1-slug`, no code) are not renamed - renaming breaks references in `validation.md`, `lessons.json` and commit messages. To validate a spec inside one, pass `--allow-legacy` to `validate_spec.py`.
+
+`validate_spec.py` fails a `spec.md` whose folder does not match `^m[1-9]\d*\.f[1-9]\d*\.[a-z0-9]+(-[a-z0-9]+)*$`. Once the spec is approved, regenerate the index: `python3 <skill-dir>/scripts/index.py features`.
+
 ### 1. Clarify Requirements
 
 **Load confirmed lessons first:** Before clarifying, load the project's confirmed lessons so past verification failures shape this spec instead of repeating. Run `python3 <skill-dir>/scripts/lessons.py list --status confirmed` (optionally `--scope [area]` or `--query [term]` for the area this feature touches) and apply what comes back as guidance. Load only `confirmed` - never `candidate` or `quarantined`. If no store exists yet or no code tool is available, skip silently. See [lessons.md](lessons.md).
@@ -115,7 +128,7 @@ behind a form. Labels and sentences the capture draws are copied character for c
 data - names, quantities, dates - is not transcribed: the builder recreates it with the capture open.
 
 **Departing from a binding source is the user's call.** Removing, renaming or changing something it
-draws is asked, with your recommendation. The answer becomes an `AD-NNN` in `.specs/STATE.md` whose
+draws is asked, with your recommendation. The answer becomes an ADR (`docs/adr/AD-NNN-slug.md`, then `index.py adr`) whose
 rationale quotes the question and the option chosen, and each departure gets a row in
 `## Differences from the source` citing it.
 

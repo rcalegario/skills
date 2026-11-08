@@ -40,13 +40,16 @@ Plan and implement features with precision. Granular tasks. Clear dependencies. 
 
 | When | Command |
 | --- | --- |
-| Before presenting the spec | `validate_spec.py <feature>` - EARS criteria, filled assumptions, requirement IDs, and with captures: binding or quoted, cited, shown, departures approved |
+| Before specifying | `index.py features --check` (regenerate with `index.py features`), then read `.specs/features/AGENTS.md` for the next free feature code |
+| Before presenting the spec | `validate_spec.py <feature>` - the folder is `m<N>.f<N>.<slug>`, EARS criteria, filled assumptions, requirement IDs, and with captures: binding or quoted, cited, shown, departures approved |
 | Before presenting the tasks | `validate_tasks.py <feature>` - granularity, dependencies, `Tests` and `Gate` per task, `## Checks` with a proof each, `**Build**:`, a `Run` line and an expected line for each `run` proof |
 | Before the first task | `validate_tasks.py <feature> --execute` - the same checks, the spec and tasks each approved in the user's words, and the `**Build**:` line run once: red before any change stops |
 | Before each commit | `check_commit.py --message "<msg>"` - it also prints what follows the last task |
 | After the last task, and after the fix | `check_proofs.py <feature>` - writes `proofs.md` |
 | Before declaring the feature done | `validate_verification.py <feature>` - proofs green at `HEAD`, clean tree, a `## Checks` row judging each check, findings closed, pictures judged in round 1 or 2, walk logged, both approvals written |
-| After editing a script or a template | `selftest.py` |
+| After the spec is approved, and after the feature is done | `index.py features` - regenerates the feature index |
+| After writing or superseding an ADR | `index.py adr` - regenerates `docs/adr/AGENTS.md` |
+| After editing a script or a template | `selftest.py`, and `python3 -m unittest discover -s tests` for `index.py` and `validate_spec.py` |
 
 Skip a script only when no code-execution tool is available; then perform the same checks by reading the artifact.
 
@@ -59,7 +62,7 @@ Skip a script only when no code-execution tool is available; then perform the sa
 | Scope       | What                     | Specify                                                 | Design                                          | Tasks                         | Execute                                               |
 | ----------- | ------------------------ | ------------------------------------------------------- | ----------------------------------------------- | ----------------------------- | ----------------------------------------------------- |
 | **Small**   | ≤3 files, one sentence   | One-liner spec (inline)                                 | Skip                                            | Skip                          | Implement + verify inline                             |
-| **Medium**  | Clear feature, <10 tasks | Spec (brief)                                            | Skip - design inline                            | Skip - tasks implicit         | Implement + verify                                    |
+| **Medium**  | Clear feature, ≤5 steps  | Spec (brief)                                            | Skip - design inline                            | Skip - tasks implicit         | Implement + verify                                    |
 | **Large**   | Multi-component feature  | Full spec + requirement IDs                             | Architecture + components                       | Full breakdown + dependencies | Implement + verify per task                           |
 | **Complex** | Ambiguity, new domain    | Full spec + [discuss gray areas](references/discuss.md) | [Research](references/design.md) + architecture | Breakdown + phase plan        | Implement + [interactive UAT](references/validate.md) |
 
@@ -67,7 +70,7 @@ Skip a script only when no code-execution tool is available; then perform the sa
 
 - **Specify and Execute are always required** - you always need to know WHAT and DO it
 - **Design is skipped** when the change is straightforward (no architectural decisions, no new patterns)
-- **Tasks is skipped** when there are ≤3 obvious steps (they become implicit in Execute); the checks then go in a `## Checks` section at the end of `spec.md`
+- **Tasks is skipped** when there are ≤5 obvious steps (they become implicit in Execute); the checks then go in a `## Checks` section at the end of `spec.md`
 - **Discuss is triggered within Specify** when the agent detects gray areas that need user input, or when the feature has any implicit-requirement dimension present (persistence/state, external calls, auth, payments, concurrency, state transitions)
 - **Interactive UAT is triggered within Execute** only for user-facing features with complex behavior
 
@@ -77,11 +80,13 @@ Skip a script only when no code-execution tool is available; then perform the sa
 
 ```
 .specs/
-├── STATE.md            # Project memory: Decisions log (AD-NNN) + Handoff snapshot
+├── STATE.md            # Handoff snapshot only (decisions live in docs/adr/)
 ├── LESSONS.md          # Self-improving lessons playbook (rendered by scripts/lessons.py - do not hand-edit)
 ├── lessons.json        # Canonical lessons state (machine-owned)
 └── features/
-    └── [feature]/
+    ├── AGENTS.md            # Generated feature index: status + summary (scripts/index.py features - do not hand-edit)
+    ├── CLAUDE.md            # `@AGENTS.md` import
+    └── m<N>.f<N>.<slug>/    # milestone, feature in it, summary (e.g. m4.f2.recurring-sort)
         ├── spec.md          # Requirements with traceable IDs, Differences from the source, Sources
         ├── captures/        # binding design files, and <capture>.running.png pictures
         ├── context.md       # User decisions for gray areas (only when discuss is triggered)
@@ -90,7 +95,14 @@ Skip a script only when no code-execution tool is available; then perform the sa
         ├── proofs.md        # written by check_proofs.py: every proof at HEAD, and each run's output
         ├── screens.md       # the screens sub-agent's inventory and verdict, per picture
         └── verification.md  # the Verifier's judgement of each check, and its findings closed by commits
+
+docs/adr/               # Project-level decisions (outside .specs/)
+├── AD-NNN-slug.md      # One ADR per decision
+├── AGENTS.md           # Generated index of active ADRs (scripts/index.py adr - do not hand-edit)
+└── CLAUDE.md           # `@AGENTS.md` import
 ```
+
+**Folder name:** `m<N>` is the milestone - a large cut that delivers value; `f<N>` is a feature inside it - smaller, and it may be a slice like back or front rather than a vertical one. `f` restarts at `f1` in each milestone. See [specify.md](references/specify.md#0-feature-folder-milestone-and-feature-code). Older folders (`m4-slug`, `m4.1-slug`, no code) keep their names.
 
 **Create artifacts lazily.** Write each file only when its phase produces content - never scaffold empty `context.md`, `design.md`, or `tasks.md` up front. Absence is the correct state for a skipped phase.
 
@@ -98,23 +110,26 @@ Skip a script only when no code-execution tool is available; then perform the sa
 
 **New feature:**
 
-1. Specify → (Design) → (Tasks) → Execute (depth auto-sized)
+1. Resolve the milestone and feature code (ROADMAP, else ask the user) → Specify → (Design) → (Tasks) → Execute (depth auto-sized)
 
 **Resume work - a new session, or after a compaction:**
 
 1. Re-read this file, then the reference for the phase the files show. A summary keeps the task, not these rules.
-2. Read `.specs/STATE.md` Decisions and the feature's files - `spec.md` and `tasks.md` (their `**Approved**:` lines, marks and `## Handoff`), `proofs.md`, `verification.md`, `screens.md` - and reconcile them against git: evidence wins over a note. Where each file puts you: [memory.md](references/memory.md).
+2. Read `.specs/features/AGENTS.md` (run `index.py features --check` first), `.specs/STATE.md` (Handoff), `docs/adr/AGENTS.md` and the feature's files - `spec.md` and `tasks.md` (their `**Approved**:` lines, marks and `## Handoff`), `proofs.md`, `verification.md`, `screens.md` - and reconcile them against git: evidence wins over a note. Where each file puts you: [memory.md](references/memory.md).
 3. After a compaction in the middle of a run, continue when the files and git agree; stop only on a conflict. In a new session, propose the reconciled next step before writing code.
 
 ## Context Loading Strategy
 
 Load only what the current step needs:
 
-- `.specs/STATE.md` - Decisions section (read at Specify and Design, re-read on resume); Handoff section (read on resume only)
+- `docs/adr/AGENTS.md` - generated index of active ADRs (read at Specify and Design, re-read on resume; open a full ADR only when its Scope applies)
+- `.specs/STATE.md` - Handoff (read on resume only)
 - confirmed lessons - load at Specify and Design via `python3 <skill-dir>/scripts/lessons.py list --status confirmed` ([lessons.md](references/lessons.md)); confirmed only, never candidates
 - spec.md, context.md, design.md, tasks.md - when the step works from them
 
 Never load several feature specs or several architecture docs at once.
+
+**Size limits:** spec.md ≲3k words, design.md ≲5k, tasks.md ≲6k (check with `wc -w`). Over that, split the feature or the document.
 
 ## Sub-Agent Delegation
 
@@ -154,7 +169,7 @@ Never load several feature specs or several architecture docs at once.
 
 ## Knowledge
 
-Facts you look up, decisions you ask. Look in the codebase and its conventions first, then the project docs and `.specs/STATE.md`, then library documentation, then the web. Never invent an API, a pattern or a behaviour: "I could not find documentation for this" beats a plausible fabrication, and anything you could not confirm is said to be uncertain.
+Facts you look up, decisions you ask. Look in the codebase and its conventions first, then the project docs and `docs/adr/`, then library documentation, then the web. Never invent an API, a pattern or a behaviour: "I could not find documentation for this" beats a plausible fabrication, and anything you could not confirm is said to be uncertain.
 
 ## Requires
 
