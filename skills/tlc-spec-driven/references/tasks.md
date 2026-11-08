@@ -2,7 +2,7 @@
 
 **Goal**: Break into GRANULAR, ATOMIC tasks. Clear dependencies. Right tools. Sequential phase execution plan.
 
-**Skip this phase when:** There are ≤3 obvious steps. In that case, tasks are implicit - go straight to Execute and list them inline in your implementation plan.
+**Skip this phase when:** There are ≤5 obvious steps. In that case, tasks are implicit - go straight to Execute and list them inline in your implementation plan.
 
 ## Why Granular Tasks?
 
@@ -202,7 +202,7 @@ Present the tasks for approval and stop: this is the second stop for a human, af
 
 ## Template: `.specs/features/[feature]/tasks.md`
 
-```markdown
+````markdown
 # [Feature] Tasks
 
 ## Execution Protocol (MANDATORY -- do not skip)
@@ -376,6 +376,7 @@ Phase 3:  T8 ------→ T9
 ```
 
 Execution is strictly sequential - there is no intra-phase parallelism. A single agent (or batch worker) works one task at a time, in order.
+````
 
 **How phase-based execution works:**
 
