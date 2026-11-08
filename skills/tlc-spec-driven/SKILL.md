@@ -73,6 +73,7 @@ Skip a script only when no code-execution tool is available; then perform the sa
 - **Tasks is skipped** when there are ≤5 obvious steps (they become implicit in Execute); the checks then go in a `## Checks` section at the end of `spec.md`
 - **Discuss is triggered within Specify** when the agent detects gray areas that need user input, or when the feature has any implicit-requirement dimension present (persistence/state, external calls, auth, payments, concurrency, state transitions)
 - **Interactive UAT is triggered within Execute** only for user-facing features with complex behavior
+- **The spec is grilled by scope** (see [Companion skills](#companion-skills)): Small never; Medium on the user's yes; Large and Complex by default
 
 **Safety valve:** Even when Tasks is skipped, Execute ALWAYS starts by listing atomic steps inline (see [implement.md](references/implement.md)). If that listing reveals >5 steps or complex dependencies, STOP and create a formal `tasks.md` - the Tasks phase was wrongly skipped.
 
@@ -166,6 +167,22 @@ Never load several feature specs or several architecture docs at once.
 | Resume work, continue, pick up where we left off | [memory.md](references/memory.md) |
 | Load lessons, what have we learned, apply past lessons | [lessons.md](references/lessons.md) |
 | Record lesson, distill lessons (runs after the gate) | [lessons.md](references/lessons.md) |
+
+## Companion skills
+
+Both are optional. Without them the phase runs with the plain fallback written here.
+
+**`grilling` - stress-test the spec before it is approved.**
+
+| Scope | Grill |
+| --- | --- |
+| Small | Never |
+| Medium | After the spec passes `validate_spec.py` and before you ask for approval, offer one line: "Want me to grill this spec first? I'd say yes." Run it only on a yes |
+| Large, Complex | Run it by default, before presenting the spec. The user skips it with a word |
+
+Load `grilling` and let it drive. Bound its questions to this feature's gray areas, criteria and Out of Scope; technical architecture stays out - that is Design's job - and the scope guardrail in [discuss.md](references/discuss.md) still holds. Each answer goes into the spec in the turn it arrives (a criterion, an Assumptions row, an `AD-NNN`, or `context.md`). When its frontier is empty, return to Specify. Without the skill: one question per turn, your recommended answer first, in dependency order.
+
+**`show-me` - explain with the smallest visual that makes the point.** Use it in conversation: the options of a gray area, the summary you present before an approval (spec, design, tasks), an explanation the user asks for. In the documents, only where a visual is shorter than the text it replaces: `design.md` for a flow, a component structure or a data flow that is not trivial; `spec.md` only for a flow or state machine its criteria cannot state in a line. One visual per section; a call tree, component tree, file tree or Mermaid diagram; never an HTML page inside a feature document. `show-me` is user-invoked: load it with the Skill tool and, if the harness refuses, read its `SKILL.md` from the skills directory and follow it. Without it, write the same sketches by hand.
 
 ## Knowledge
 

@@ -36,6 +36,10 @@ Generate 3-4 **feature-specific** gray areas. Not generic categories, but concre
 
 ### 2. Ask them
 
+**Large and Complex:** the deep-dive is the grill - load `grilling` per [Companion skills](../SKILL.md#companion-skills) and let it drive over the gray areas you generated. **Medium and Small:** ask as below; the grill is only offered once the spec is ready.
+
+Show an option instead of describing it when a sketch is shorter - layout, a flow, a state - with `show-me` ([Companion skills](../SKILL.md#companion-skills)).
+
 Put every gray area that is the user's to the user before the spec is presented: concrete options,
 your recommendation first with one line of why, so the user can accept or override in a word.
 Resolve anything the code answers yourself. A low-stakes default that is not a product decision is
