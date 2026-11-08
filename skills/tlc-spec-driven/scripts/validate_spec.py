@@ -17,7 +17,7 @@ What it checks (heuristic markdown inspection, not a full parser):
   ERROR  - a capture under captures/ with no Sources line, non-binding with no quote of the user,
            not cited by a criterion, or not shown as an image (`![..](captures/..)`)
   ERROR  - a binding source and no `## Differences from the source`, or a row not confirmed under an
-           active AD-NNN in .specs/STATE.md
+           active AD-NNN (docs/adr/AD-NNN-*.md, or .specs/STATE.md in older projects)
   WARN   - an AC has SHALL but no recognizable EARS lead keyword
   WARN   - template placeholder rows are still present (spec not filled in)
   WARN   - open questions are not explicitly resolved
@@ -272,18 +272,35 @@ def _body(lines, name):
     return out
 
 
+ADR_FILE_RE = re.compile(r"^(AD-\d{3,})-.+\.md$")
+ADR_ACTIVE_RE = re.compile(r"^\s*-\s*\*\*Status\*\*\s*:\s*active\s*$", re.IGNORECASE | re.MULTILINE)
+
+
 def _active_decisions(spec_path):
-    """AD ids marked active in .specs/STATE.md (the project root is the folder holding .specs/)."""
+    """AD ids that are active: docs/adr/AD-NNN-*.md with `Status: active`, plus the rows marked active in
+    .specs/STATE.md (legacy projects). The project root is the folder holding .specs/."""
     cur = os.path.dirname(os.path.abspath(spec_path))
     while True:
-        state = os.path.join(cur, ".specs", "STATE.md")
-        if os.path.isfile(state):
-            with open(state, encoding="utf-8") as f:
-                return {m.group(0) for ln in f if "active" in ln.lower() for m in AD_ID_RE.finditer(ln)}
+        if os.path.isdir(os.path.join(cur, ".specs")):
+            break
         parent = os.path.dirname(cur)
         if parent == cur:
             return set()
         cur = parent
+    active = set()
+    state = os.path.join(cur, ".specs", "STATE.md")
+    if os.path.isfile(state):
+        with open(state, encoding="utf-8") as f:
+            active |= {m.group(0) for ln in f if "active" in ln.lower() for m in AD_ID_RE.finditer(ln)}
+    adr_dir = os.path.join(cur, "docs", "adr")
+    if os.path.isdir(adr_dir):
+        for name in os.listdir(adr_dir):
+            m = ADR_FILE_RE.match(name)
+            if m:
+                with open(os.path.join(adr_dir, name), encoding="utf-8", errors="replace") as f:
+                    if ADR_ACTIVE_RE.search(f.read()):
+                        active.add(m.group(1))
+    return active
 
 
 def check_sources(lines, spec_path):
@@ -332,7 +349,7 @@ def check_sources(lines, spec_path):
                     errors.append(f"Differences '{cells[0][:40]}': Confirmed is '{confirmed[:20]}' - departing from a "
                                   "binding source is the user's call; ask it")
                 elif not any(m in active for m in AD_ID_RE.findall(confirmed)):
-                    errors.append(f"Differences '{cells[0][:40]}': cites no active AD-NNN in .specs/STATE.md - the "
+                    errors.append(f"Differences '{cells[0][:40]}': cites no active AD-NNN (docs/adr/ or .specs/STATE.md) - the "
                                   "decision holds the question and the answer")
     return errors
 
