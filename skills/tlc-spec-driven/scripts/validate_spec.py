@@ -9,6 +9,7 @@ on the spec.md markdown artifact - never on the target codebase - so it stays
 stack-agnostic and tool-agnostic.
 
 What it checks (heuristic markdown inspection, not a full parser):
+  ERROR  - the feature folder name is not m<N>.f<N>.<slug> (milestone, feature, kebab-case slug)
   ERROR  - a required section is missing
   ERROR  - an acceptance criterion has no SHALL (not testable / not EARS-shaped)
   ERROR  - an Assumptions row has an empty "Chosen default" or "Rationale" cell
@@ -22,13 +23,15 @@ What it checks (heuristic markdown inspection, not a full parser):
   WARN   - open questions are not explicitly resolved
 
 Usage:
-  python3 <skill-dir>/scripts/validate_spec.py [target] [--root DIR] [--strict]
+  python3 <skill-dir>/scripts/validate_spec.py [target] [--root DIR] [--strict] [--allow-legacy]
 
   Invoke from the skill directory that ships this script (not the project root).
   target    Path to a spec.md, a feature directory, or a project root.
             Omitted -> auto-detect the single feature under <root>/.specs/features/.
   --root    Project root that contains .specs/ (default: current dir).
   --strict  Treat warnings as errors.
+  --allow-legacy  Folders from before the m<N>.f<N> scheme (m4-slug, m4.1-slug, no code) only warn.
+            A name that starts like the new scheme (m<N>.f...) but is malformed still fails.
 
 Exit codes: 0 pass, 1 errors found (or warnings under --strict), 2 usage error.
 """
@@ -52,6 +55,8 @@ REQUIRED_SECTIONS = [
     "Requirement Traceability",
 ]
 
+FEATURE_NAME_RE = re.compile(r"^m[1-9]\d*\.f[1-9]\d*\.[a-z0-9]+(-[a-z0-9]+)*$")
+NEW_SCHEME_START_RE = re.compile(r"^m\d+\.f", re.IGNORECASE)
 ID_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 PLACEHOLDER_RE = re.compile(r"^\s*\[.+\]\s*$")
 STATUS_VALUES = {"pending", "in design", "in tasks", "implementing", "verified"}
@@ -152,11 +157,20 @@ def classify_ears(text):
     return (True, "warn: SHALL present but no EARS lead keyword")
 
 
-def check(spec_path):
+def check(spec_path, allow_legacy=False):
     with open(spec_path, "r", encoding="utf-8") as f:
         text = f.read()
     lines = text.splitlines()
     errors, warnings = [], []
+
+    # 0. Feature folder carries the milestone and feature code.
+    folder = os.path.basename(os.path.dirname(os.path.abspath(spec_path)))
+    if not FEATURE_NAME_RE.match(folder):
+        msg = f"feature folder '{folder}' must be m<N>.f<N>.<slug> (e.g. m4.f2.recurring-sort)"
+        if allow_legacy and not NEW_SCHEME_START_RE.match(folder):
+            warnings.append(f"legacy folder name '{folder}' (not m<N>.f<N>.<slug>) - not renamed")
+        else:
+            errors.append(msg)
 
     # 1. Required sections.
     for name in REQUIRED_SECTIONS:
@@ -328,6 +342,7 @@ def main(argv=None):
     p.add_argument("target", nargs="?", default=None)
     p.add_argument("--root", default=".")
     p.add_argument("--strict", action="store_true")
+    p.add_argument("--allow-legacy", action="store_true")
     args = p.parse_args(argv)
 
     spec = resolve_spec(args.target, args.root)
@@ -335,7 +350,7 @@ def main(argv=None):
         print("validate_spec: could not locate a spec.md. Pass a path or run from the project root.", file=sys.stderr)
         return 2
 
-    errors, warnings = check(spec)
+    errors, warnings = check(spec, allow_legacy=args.allow_legacy)
     for w in warnings:
         print(f"  WARN  {w}")
     for e in errors:
