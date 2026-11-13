@@ -55,7 +55,7 @@ A milestone is a cut that delivers value on its own; a feature is a piece of it,
 
 ## Steps
 
-1. **Roadmap.** Read `ROADMAP.yaml` (`status`). Work that is not in it gets a feature through `add`; when the milestone is unclear, ask. Planning a whole roadmap is a conversation about milestones first, features second.
+1. **Roadmap.** On `init`, check the project has a `CLAUDE.md` or `AGENTS.md` stating its commands, folder structure, code style and boundaries (always / ask first / never); when it lacks one, offer to write it with `/init`. These hold for every feature, so specs never repeat them. Read `ROADMAP.yaml` (`status`). Work that is not in it gets a feature through `add`; when the milestone is unclear, ask. Planning a whole roadmap is a conversation about milestones first, features second.
 2. **Specify** → read [references/spec.md](references/spec.md). Done when `check <feature>` passes and the user approved: `approve <feature> spec`.
 3. **Tasks** → read [references/tasks.md](references/tasks.md). Done when `check <feature>` passes and the user approved: `approve <feature> tasks`.
 4. **Execute and validate** → read [references/execute.md](references/execute.md). Done when `finish <feature>` exits 0.

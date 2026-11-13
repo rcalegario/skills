@@ -33,6 +33,7 @@ checks:
 
 - **Tracer bullets.** Each task is a thin vertical slice through every layer it needs (data, logic, UI, test) that works and can be shown on its own. Slice by behaviour, never by layer.
 - A refactor that makes the next task easy comes first, as its own task.
+- **Riskiest first.** Among tasks that can start, lead with the one you are least sure works: a library or service the project never used, a data shape other tasks build on, a performance doubt, the part the user hesitated on. When the doubt is too big for a task, add a spike task before it (`prototype` skill) so the plan changes before the rest is built.
 - `blocked_by` lists only the tasks that truly gate this one.
 - Medium: 1-5 tasks. More than ~8 means the feature is too big: split it into two features, or escalate to `tlc-spec-driven`.
 - **`commit`** is the final message, written now so the user approves it with the task. Match the repo: run `git log -n 10 --oneline` and copy its prefix style and language. The subject says why the change matters, not which files it touches.
@@ -49,6 +50,6 @@ A project with no test setup gets all-manual checks; say so when presenting.
 
 ## Present and stop
 
-Run `check <feature>` until it passes. Present the tasks as a numbered list (title, blocked by, commit message) and the checks (AC → test or manual). Ask whether the granularity and the messages are right.
+Run `check <feature>` until it passes. Present the tasks as a numbered list (title, blocked by, commit message), with one line on why the first task leads, and the checks (AC → test or manual). Ask whether the granularity and the messages are right.
 
 On the user's approval: `approve <feature> tasks`. Then go to [execute.md](execute.md).

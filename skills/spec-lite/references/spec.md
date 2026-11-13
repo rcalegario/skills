@@ -4,7 +4,16 @@ Goal: a `spec.md` the user approves, where every acceptance criterion states one
 
 ## 1. Understand the request
 
-Scan the code around the feature first, so questions are grounded in what exists. Then talk: what problem, for whom, what does done look like, what is out. Turn vague words into concrete ones ("fast" → "under 1 s for 1,000 rows"; "users" → "the logged-in owner").
+Scan the code around the feature first, then open with the assumptions you are making, each with where it came from, so the user corrects them at a glance:
+
+```
+Assumptions (correct me now, or I go with these):
+1. Export uses the current screen's filters, not the whole list — the list filters client-side
+2. Comma separator, UTF-8 with BOM, so Excel opens it right
+3. Only the list owner can export — same rule as the "Edit" button
+```
+
+Every answer lands in the spec: an AC, an `Out of scope` line, or a `## Notes` entry. Then talk: what problem, for whom, what does done look like, what is out. Turn vague words into concrete ones ("fast" → "under 1 s for 1,000 rows"; "users" → "the logged-in owner").
 
 **Grill by size.** Medium: when the draft passes `check`, offer once: "Want me to grill this spec first?" and run `grilling` on a yes. Large: run `grilling` before presenting the spec. Bound it to this feature's behaviour and scope; architecture is the design's job.
 
