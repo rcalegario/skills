@@ -21,8 +21,9 @@ Talk to the user in their language. Free-text ficha values (`question`, `feature
 
 - A path names the project folder; a bare name means `~/Projects/<name>`.
 - Omitted, inside a project under `~/Projects`: that project's top-level folder.
+- Omitted, inside `<home>`: the first folder that `catalog.py validate` reports as `<folder>: no project.yaml`. When it reports none, tell the user the catalog covers every folder, and stop.
 
-The ficha's `id` is the folder name. The current ficha, when there is one, is `<folder>/project.yaml` or `<home>/catalog/external/<id>.yaml`.
+The ficha's `id` is the folder name. It lives in `<folder>/project.yaml`, except for a folder that `<home>/CLAUDE.md` marks as not ours (no commits there): its ficha is `<home>/catalog/external/<id>.yaml`, and nothing is written in that folder.
 
 ### 2. Read
 
@@ -65,3 +66,16 @@ Show in chat:
 - that `validate` passed.
 
 Ask for a yes, or for edits. Edits go back to step 4, and the new proposal is shown whole again. Nothing is written until the yes.
+
+### 6. Write
+
+On the yes:
+
+1. Write the ficha and every reverse edit to their files.
+2. Commit each project folder that got a file and has git, one commit per repo, local only:
+   - copy the format of the repo's `git log -n 10 --oneline` (prefix, language); the subject says the ficha puts the project in the home catalog;
+   - commit the ficha alone, even when other work is staged: `git -C <folder> add project.yaml && git -C <folder> commit -m "<message>" -- project.yaml`.
+   A folder without git just keeps the file.
+3. Run `uv run <home>/catalog/catalog.py index`, and commit `catalog/index.yaml` in the home together with any external ficha written in step 1, in the home's commit format.
+
+Done when `index.yaml` lists the project and `git status` shows no uncommitted ficha in any repo this run touched. Report the commits made, and the next folder without a ficha when the target came from `validate`.
