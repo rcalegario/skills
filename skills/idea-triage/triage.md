@@ -37,9 +37,14 @@ date: 2026-11-14
 idea: Saber quanto posso gastar por dia sem estourar o orçamento.
 candidates:
   catalog:
-    - {id: cashflow-planner, matched: features, covers: tem cota-diaria e projeção diária}
+    - id: cashflow-planner
+      matched: features
+      covers: tem cota-diaria e projeção diária
   github:
-    - {repo: lipeng3g/BalanceWindow, stars: 30, pushed: 2026-08-30, covers: só projeção, sem orçamento}
+    - repo: lipeng3g/BalanceWindow
+      stars: 30
+      pushed: 2026-08-30
+      covers: só projeção, sem orçamento
   blind_spots: []
 verdict: exists              # exists | feature | route | standalone
 target: cashflow-planner     # the project id or GitHub repo for exists and feature; omitted for route and standalone
