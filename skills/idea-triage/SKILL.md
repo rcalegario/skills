@@ -1,13 +1,14 @@
 ---
 name: idea-triage
-description: Keeps the catalog of projects under ~/Projects. Use to write or update a project's ficha (project.yaml), or to fill the catalog folder by folder. /idea-triage ficha [repo]
+description: Keeps the catalog of projects under ~/Projects. Use to write or update a project's ficha (project.yaml), or to fill the catalog folder by folder.
+argument-hint: ficha [repo]
 ---
 
 # idea-triage
 
 `<home>` is `realpath <skill-dir>/../..`: this skill lives in `<home>/skills/idea-triage`, reached through a symlink. The catalog is `<home>/catalog/`: the schema `project.schema.json` (the only source of fields, enums and patterns), the checker `catalog.py`, run as `uv run <home>/catalog/catalog.py validate|index`, and the generated `index.yaml`.
 
-Talk to the user in their language. Free-text ficha values (`question`, `features`, `notes`) are in Portuguese; `entities` are English nouns, as in the doc example; ids and enum values stay as the schema has them.
+Free-text ficha values (`question`, `features`, `notes`) are in Portuguese; `entities` are English nouns, as in the example in `<home>/docs/estrutura-projetos.md`; ids and enum values stay as the schema has them.
 
 ## Modes
 
@@ -25,38 +26,43 @@ Talk to the user in their language. Free-text ficha values (`question`, `feature
 
 The ficha's `id` is the folder name. It lives in `<folder>/project.yaml`, except for a folder that `<home>/CLAUDE.md` marks as not ours (no commits there): its ficha is `<home>/catalog/external/<id>.yaml`, and nothing is written in that folder.
 
+Done when you have one folder, its id, and the path its ficha goes to.
+
 ### 2. Read
 
 Read what the project already says about itself, then the code only where that leaves a field open:
 
 - `CONTEXT.md`, `CLAUDE.md` / `AGENTS.md`, `README*`, and the project's line in `<home>/CLAUDE.md`;
 - manifests and deploy files: `package.json`, `pyproject.toml`, `requirements.txt`, `appsscript.json` / `.clasp.json`, `pubspec.yaml`, `wrangler.toml`, `docker-compose*`, `Dockerfile`, `*.tf`, `supabase/`, `firebase.json`;
-- `git log --oneline -15` and `git remote -v` (a remote outside the user's account means `fork` or `upstream`);
-- the catalog: `<home>/catalog/index.yaml`, or every ficha when the index is missing, to find projects that answer the same question.
+- `git log --oneline -15` and `git remote -v`;
+- the catalog: `<home>/catalog/index.yaml`, or every ficha when the index is missing, to find projects that answer the same question;
+- the current ficha, when there is one.
 
 Done when every schema field has a source in what you read, or is marked as a guess for the user to settle.
 
 ### 3. Draft
 
-Fill the ficha from the schema, field by field:
+When the project already has a ficha, start from it: keep every field the evidence still supports and change only what it contradicts or lacks.
+
+The schema gives each field's allowed values; these are the conventions it does not hold:
 
 - `question`: the one question the project answers, as the user would ask it.
-- `intent`: `ativo` when the user relies on it today, `experimento` when it was tried and paused, `arquivado` when dropped. Mark it a guess unless the docs say so.
-- `domain`: the area the question belongs to (`finance`, `home`, `infra`...), reusing a domain already in the catalog when one fits.
-- `shape`: `standalone` for every existing project (the central does not exist yet).
-- `origin`: from the project's line in `<home>/CLAUDE.md` first, then `git remote -v`: "fork of" means `fork`, "not ours" or a third-party remote means `upstream`; otherwise leave it out (`own` is the default).
-- `runs_on`: where it actually runs, from the deploy files, not where it could.
-- `stack`: free keys (`api`, `front`, `db`, `worker`, `bot`, ...) with short values.
+- `intent`: what the user does with it today; a guess unless the docs say so.
+- `domain`: reuse a domain already in the catalog when one fits.
+- `shape`: `standalone` for every existing project, since the central (the shared monorepo in `<home>/docs/estrutura-projetos.md`) does not exist yet.
+- `origin`: from the project's line in `<home>/CLAUDE.md` first, then `git remote -v`: "fork of" means `fork`, "not ours" or a third-party remote means `upstream`; an own project leaves it out.
+- `runs_on`: where it runs today, from the deploy files.
 - `overlaps`: only ids already in the catalog. A project that overlaps but has no ficha yet goes into `notes` as `sobrepõe <id> (sem ficha ainda)`.
-- Overlaps are symmetric. List the **reverse edits** the draft implies: each catalogued project in `overlaps` whose ficha lacks this id gains it, and each catalogued ficha whose `notes` say `sobrepõe <this id> (sem ficha ainda)` gains this id in `overlaps` and loses that note.
+
+Overlaps are symmetric. List the **reverse edits** the draft implies: each catalogued project in `overlaps` whose ficha lacks this id gains it, and each catalogued ficha whose `notes` say `sobrepõe <this id> (sem ficha ainda)` gains this id in `overlaps` and loses that note.
 
 Start a root ficha with `# yaml-language-server: $schema=../home/catalog/project.schema.json`; an external one with `# yaml-language-server: $schema=../project.schema.json`.
 
-When the project already has a ficha, start from it: keep every field the evidence still supports and change only what it contradicts or lacks.
+Done when every required field is filled or marked a guess, and every reverse edit is listed.
 
 ### 4. Validate
 
-Write the draft and each reverse edit to scratch files and validate them in one call, so each one's id is known to the others: `uv run <home>/catalog/catalog.py validate --file <draft> --file <reverse-1> ...`. Fix and run again until it prints `<n> fichas OK`. The user never sees a ficha that has not passed.
+Write the draft and each reverse edit to scratch files and validate them in one call, so each one's id is known to the others: `uv run <home>/catalog/catalog.py validate --file <draft> --file <reverse-1> ...`. Fix and run again until it prints `<n> fichas OK`. Only fichas that passed reach the user.
 
 ### 5. Propose
 
@@ -67,7 +73,7 @@ Show in chat:
 - the guesses, each with what would settle it;
 - that `validate` passed.
 
-Ask for a yes, or for edits. Edits go back to step 4, and the new proposal is shown the same way (whole when new, a diff when updating). Nothing is written until the yes.
+Ask for a yes, or for edits. Edits go back to step 4, and the new proposal is shown the same way (whole when new, a diff when updating). Files are written only after the yes.
 
 ### 6. Write
 
