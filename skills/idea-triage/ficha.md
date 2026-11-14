@@ -33,7 +33,7 @@ The schema gives each field's allowed values; these are the conventions it does 
 - `question`: the one question the project answers, as the user would ask it.
 - `intent`: what the user does with it today; a guess unless the docs say so.
 - `domain`: reuse a domain already in the catalog when one fits.
-- `shape`: `standalone` for every existing project, since the central (the shared monorepo in `<home>/docs/estrutura-projetos.md`) does not exist yet.
+- `shape`: `standalone` for every existing project, since the central does not exist yet.
 - `origin`: from the project's line in `<home>/CLAUDE.md` first, then `git remote -v`: "fork of" means `fork`, "not ours" or a third-party remote means `upstream`; an own project leaves it out.
 - `runs_on`: where it runs today, from the deploy files.
 - `overlaps`: only ids already in the catalog. A project that overlaps but has no ficha yet goes into `notes` as `sobrepõe <id> (sem ficha ainda)`.

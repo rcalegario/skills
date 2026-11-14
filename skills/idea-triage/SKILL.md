@@ -1,6 +1,6 @@
 ---
 name: idea-triage
-description: Keeps the catalog of projects under ~/Projects and triages new ideas against it. Use to write or update a project's ficha (project.yaml), to fill the catalog folder by folder, or to triage a new idea before any code is written.
+description: Triages new ideas against the catalog of projects under ~/Projects, and keeps that catalog. Use to triage an idea before any code is written, or to write or update a project's ficha (project.yaml).
 argument-hint: ficha [repo] | triage [idea]
 ---
 
@@ -8,7 +8,11 @@ argument-hint: ficha [repo] | triage [idea]
 
 `<home>` is `realpath <skill-dir>/../..`: this skill lives in `<home>/skills/idea-triage`, reached through a symlink. The catalog is `<home>/catalog/`: the schema `project.schema.json` (the only source of fields, enums and patterns), the checker `catalog.py`, run as `uv run <home>/catalog/catalog.py validate|index`, and the generated `index.yaml`.
 
-Free-text ficha values (`question`, `features`, `notes`) are in Portuguese; `entities` are English nouns, as in the example in `<home>/docs/estrutura-projetos.md`; ids and enum values stay as the schema has them.
+Free-text values (a ficha's `question`, `features`, `notes`; a triage record's text) are in Portuguese; `entities` are English nouns (`account`, `transaction`); ids and enum values stay as the schema has them.
+
+The **central** is the shared monorepo where new ideas enter as modules (a ficha's `shape: route`); a project of its own is `standalone`. The central does not exist yet: every existing project is `standalone`, and work on a `route` idea waits for the central to be created.
+
+The rules here and in the mode files are the current ones; `<home>/docs/estrutura-projetos.md` records the conversation they started from.
 
 ## Modes
 
