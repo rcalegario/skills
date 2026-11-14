@@ -27,3 +27,32 @@ Done when every catalogued project has been weighed, and the GitHub list holds t
 Ask one question per message, each with your recommended answer so a "yes" accepts it, 10 questions at most. Ask only what the user decides: what the idea is for and who uses it, whether a candidate already does enough, which project it belongs to, which standalone criterion holds. Facts in the code, the fichas or the docs you look up yourself. Walk the funnel in order: exists, then feature, then route versus standalone; stop asking as soon as the verdict is clear.
 
 Done when one verdict follows from the answers, with its target (the project or repo for `exists` and `feature`) and the reason in one or two sentences.
+
+## 4. Record
+
+Draft the record for `<home>/docs/triage/<YYYY-MM-DD>-<slug>.yaml`, the date today and the slug a short kebab-case name for the idea in Portuguese, like ficha features. Free text in Portuguese, long text as `|` blocks:
+
+```yaml
+date: 2026-11-14
+idea: Saber quanto posso gastar por dia sem estourar o orçamento.
+candidates:
+  catalog:
+    - {id: cashflow-planner, matched: features, covers: tem cota-diaria e projeção diária}
+  github:
+    - {repo: lipeng3g/BalanceWindow, stars: 30, pushed: 2026-08-30, covers: só projeção, sem orçamento}
+  blind_spots: []
+verdict: exists              # exists | feature | route | standalone
+target: cashflow-planner     # the project id or GitHub repo for exists and feature; omitted for route and standalone
+why: |
+  A cota diária do cashflow-planner já responde à pergunta.
+```
+
+Show the record in chat and ask for a yes or for edits; each edit shows the record again. Nothing is written before the yes.
+
+Done when the user said yes to a record whose `candidates` hold every candidate from step 2 and whose `target`, for `exists`, names what already covers the idea.
+
+## 5. Write
+
+On the yes, write the file (create `docs/triage/` when missing) and commit it alone in the home, in the home's commit format: `git -C <home> add <file> && git -C <home> commit -m "<message>" -- <file>`.
+
+Done when `git -C <home> status` shows the record committed. For `exists`, the triage ends here: report the record's path and what covers the idea.
