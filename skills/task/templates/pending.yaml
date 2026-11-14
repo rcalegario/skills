@@ -1,0 +1,9 @@
+# pending.yaml - actions with other people or tasks. Ids P-n are permanent.
+# - id: P-n
+#   with: [ana]               # person | team | another task slug
+#   action: "<what must happen>"
+#   refs: [D-nn]
+#   status: open             # open | done | dropped
+#   closed: null             # YYYY-MM-DD
+#   link: null               # link of the comment or message, once posted
+[]

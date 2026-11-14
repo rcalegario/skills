@@ -1,0 +1,31 @@
+id: D-nn
+title: "<short sentence with the choice, or the question while open>"
+status: open                # open | proposed | decided | superseded | dropped
+date: YYYY-MM-DD            # date of the last status change
+context: []                 # context section ids used (e.g. NOW-n.m)
+born_from: []               # D-nn whose choice created this question; [] when it answers a requirement
+supersedes: null            # D-nn
+superseded_by: null         # D-nn
+discuss_with: []            # person | team | another task slug | me
+needs_code: true            # false when the choice changes no code
+question: |
+  What must be decided, in one or two lines.
+decision: |
+  What was chosen. While open or proposed: the current recommendation.
+why: |
+  - Main reason.
+options:
+  - name: "<option>"
+    status: recommended     # chosen | recommended | alternative | dropped
+    how: |
+      How it works.
+    pros:
+      - ...
+    cons:
+      - ...
+consequences: |
+  What changes in the code, risks, what other tasks need to know.
+open_points: |
+  What is missing to reach decided, and with whom.
+pr_note: |
+  Text the PR must carry because of this decision (English, ready to paste). Remove the key when none.
