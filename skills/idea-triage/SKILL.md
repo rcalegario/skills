@@ -7,7 +7,7 @@ description: Keeps the catalog of projects under ~/Projects. Use to write or upd
 
 `<home>` is `realpath <skill-dir>/../..`: this skill lives in `<home>/skills/idea-triage`, reached through a symlink. The catalog is `<home>/catalog/`: the schema `project.schema.json` (the only source of fields, enums and patterns), the checker `catalog.py`, run as `uv run <home>/catalog/catalog.py validate|index`, and the generated `index.yaml`.
 
-Talk to the user in their language. Free-text ficha values (`question`, `features`, `entities`, `notes`) are in Portuguese; ids and enum values stay as the schema has them.
+Talk to the user in their language. Free-text ficha values (`question`, `features`, `notes`) are in Portuguese; `entities` are English nouns, as in the doc example; ids and enum values stay as the schema has them.
 
 ## Modes
 
@@ -20,8 +20,8 @@ Talk to the user in their language. Free-text ficha values (`question`, `feature
 ### 1. Target
 
 - A path names the project folder; a bare name means `~/Projects/<name>`.
-- Omitted, inside a project under `~/Projects`: that project's top-level folder.
 - Omitted, inside `<home>`: the first folder that `catalog.py validate` reports as `<folder>: no project.yaml`. When it reports none, tell the user the catalog covers every folder, and stop.
+- Omitted, inside any other project under `~/Projects`: that project's top-level folder.
 
 The ficha's `id` is the folder name. It lives in `<folder>/project.yaml`, except for a folder that `<home>/CLAUDE.md` marks as not ours (no commits there): its ficha is `<home>/catalog/external/<id>.yaml`, and nothing is written in that folder.
 
@@ -42,7 +42,9 @@ Fill the ficha from the schema, field by field:
 
 - `question`: the one question the project answers, as the user would ask it.
 - `intent`: `ativo` when the user relies on it today, `experimento` when it was tried and paused, `arquivado` when dropped. Mark it a guess unless the docs say so.
+- `domain`: the area the question belongs to (`finance`, `home`, `infra`...), reusing a domain already in the catalog when one fits.
 - `shape`: `standalone` for every existing project (the central does not exist yet).
+- `origin`: from the project's line in `<home>/CLAUDE.md` first, then `git remote -v`: "fork of" means `fork`, "not ours" or a third-party remote means `upstream`; otherwise leave it out (`own` is the default).
 - `runs_on`: where it actually runs, from the deploy files, not where it could.
 - `stack`: free keys (`api`, `front`, `db`, `worker`, `bot`, ...) with short values.
 - `overlaps`: only ids already in the catalog. A project that overlaps but has no ficha yet goes into `notes` as `sobrepõe <id> (sem ficha ainda)`.
@@ -54,7 +56,7 @@ When the project already has a ficha, start from it: keep every field the eviden
 
 ### 4. Validate
 
-Write the draft and each reverse edit to scratch files and run `uv run <home>/catalog/catalog.py validate --file <scratch>` on each. Fix and run again until each prints `1 fichas OK`. The user never sees a ficha that has not passed.
+Write the draft and each reverse edit to scratch files and validate them in one call, so each one's id is known to the others: `uv run <home>/catalog/catalog.py validate --file <draft> --file <reverse-1> ...`. Fix and run again until it prints `<n> fichas OK`. The user never sees a ficha that has not passed.
 
 ### 5. Propose
 
@@ -65,17 +67,17 @@ Show in chat:
 - the guesses, each with what would settle it;
 - that `validate` passed.
 
-Ask for a yes, or for edits. Edits go back to step 4, and the new proposal is shown whole again. Nothing is written until the yes.
+Ask for a yes, or for edits. Edits go back to step 4, and the new proposal is shown the same way (whole when new, a diff when updating). Nothing is written until the yes.
 
 ### 6. Write
 
 On the yes:
 
 1. Write the ficha and every reverse edit to their files.
-2. Commit each project folder that got a file and has git, one commit per repo, local only:
+2. Commit each project folder (not the home) that got a file and has git, one commit per repo, local only:
    - copy the format of the repo's `git log -n 10 --oneline` (prefix, language); the subject says the ficha puts the project in the home catalog;
    - commit the ficha alone, even when other work is staged: `git -C <folder> add project.yaml && git -C <folder> commit -m "<message>" -- project.yaml`.
    A folder without git just keeps the file.
-3. Run `uv run <home>/catalog/catalog.py index`, and commit `catalog/index.yaml` in the home together with any external ficha written in step 1, in the home's commit format.
+3. Run `uv run <home>/catalog/catalog.py index`, and commit in the home, in its commit format, only `catalog/index.yaml` and the external fichas written in step 1: `git -C <home> add <paths> && git -C <home> commit -m "<message>" -- <paths>`. When `index` refuses because some ficha has errors, show its errors and stop: the project commits stand, and the index waits until those fichas are fixed.
 
 Done when `index.yaml` lists the project and `git status` shows no uncommitted ficha in any repo this run touched. Report the commits made, and the next folder without a ficha when the target came from `validate`.
