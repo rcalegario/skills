@@ -54,7 +54,10 @@ verdict: exists              # exists | feature | route | standalone
 target: cashflow-planner     # the project id or GitHub repo for exists and feature; omitted for route and standalone
 why: |
   A cota diária do cashflow-planner já responde à pergunta.
+# task: tasks/<slug>/      # added in step 6 when the idea becomes a task
 ```
+
+For `route`, `why` also says the central must exist before the work starts: it does not exist yet.
 
 Show the record in chat and ask for a yes or for edits; each edit shows the record again. Nothing is written before the yes.
 
@@ -65,3 +68,15 @@ Done when the user said yes to a record whose `candidates` hold every candidate 
 On the yes, write the file (create `docs/triage/` when missing) and commit it alone in the home, in the home's commit format: `git -C <home> add <file> && git -C <home> commit -m "<message>" -- <file>`.
 
 Done when `git -C <home> status` shows the record committed. For `exists`, the triage ends here: report the record's path and what covers the idea.
+
+## 6. Handoff
+
+For `feature`, `route` and `standalone`, offer `/task <slug>`, the slug the record's. On a yes, invoke the `task` skill with that slug and hand it:
+
+- the base text: the record, with its path as the README `link:`;
+- the repo to propose: the `target` for `feature`; none for `route` (the central does not exist yet) or `standalone` (the project is still to be created);
+- that the triage questions, and the grill for `standalone`, count as the task's start grill: it asks only what the record leaves open.
+
+Once `tasks/<slug>/` exists, add `task: tasks/<slug>/` to the record and commit it alone in the home, as in step 5.
+
+Done when the record and the task point to each other, or the user declined the task and the record stands alone.
