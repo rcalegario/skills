@@ -28,6 +28,10 @@ Ask one question per message, each with your recommended answer so a "yes" accep
 
 Done when one verdict follows from the answers, with its target (the project or repo for `exists` and `feature`) and the reason in one or two sentences.
 
+A `standalone` verdict creates a project, so it earns the full grill: invoke the `grilling` skill on the idea and the criterion that made it standalone, and carry what it settles (client, users, stack, data, what stays out) into the record's `why`. When the grill shows no criterion holds after all, the verdict goes back to `route`.
+
+Done, for `standalone`, when the grill's frontier is empty and the user confirmed the shared understanding.
+
 ## 4. Record
 
 Draft the record for `<home>/docs/triage/<YYYY-MM-DD>-<slug>.yaml`, the date today and the slug a short kebab-case name for the idea in Portuguese, like ficha features. Free text in Portuguese, long text as `|` blocks:
