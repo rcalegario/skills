@@ -26,7 +26,9 @@ Free-text ficha values (`question`, `features`, `notes`) are in Portuguese; `ent
 
 The ficha's `id` is the folder name. It lives in `<folder>/project.yaml`, except for a folder that `<home>/CLAUDE.md` marks as not ours (no commits there): its ficha is `<home>/catalog/external/<id>.yaml`, and nothing is written in that folder.
 
-Done when you have one folder, its id, and the path its ficha goes to.
+In a folder with git, find the **default branch** (`git symbolic-ref --short refs/remotes/origin/HEAD` without `origin/`, else `main`, else `master`) and the checked-out one. When they differ, the ficha still lives on the default branch: you read the project from the checkout (its newest work) and write the ficha through a temporary worktree of the default branch (step 6).
+
+Done when you have one folder, its id, the path its ficha goes to, and the branch it is committed on.
 
 ### 2. Read
 
@@ -36,7 +38,7 @@ Read what the project already says about itself, then the code only where that l
 - manifests and deploy files: `package.json`, `pyproject.toml`, `requirements.txt`, `appsscript.json` / `.clasp.json`, `pubspec.yaml`, `wrangler.toml`, `docker-compose*`, `Dockerfile`, `*.tf`, `supabase/`, `firebase.json`;
 - `git log --oneline -15` and `git remote -v`;
 - the catalog: `<home>/catalog/index.yaml`, or every ficha when the index is missing, to find projects that answer the same question;
-- the current ficha, when there is one.
+- the current ficha, when there is one; on another branch, `git -C <folder> show <default>:project.yaml`.
 
 Done when every schema field has a source in what you read, or is marked as a guess for the user to settle.
 
@@ -79,8 +81,8 @@ Ask for a yes, or for edits. Edits go back to step 4, and the new proposal is sh
 
 On the yes:
 
-1. Write the ficha and every reverse edit to their files.
-2. Commit each project folder (not the home) that got a file and has git, one commit per repo, local only:
+1. Write the ficha and every reverse edit to their files (for a repo on another branch, in step 2's worktree).
+2. Commit each project folder (not the home) that got a file and has git, one commit per repo, local only, on its default branch. When the checkout is another branch, write and commit in `git -C <folder> worktree add <scratch>/<id>-main <default>`, then `git -C <folder> worktree remove` it; the checkout and its pending work stay untouched.
    - copy the format of the repo's `git log -n 10 --oneline` (prefix, language); the subject says the ficha puts the project in the home catalog;
    - commit the ficha alone, even when other work is staged: `git -C <folder> add project.yaml && git -C <folder> commit -m "<message>" -- project.yaml`.
    A folder without git just keeps the file.
