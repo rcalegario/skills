@@ -60,6 +60,12 @@ Every task lives in `<home>/tasks/<main-repo>/<YYYY-MM-DD-HHMM>-<slug>/` (`tasks
 - **Date and time**: the moment `start` created the folder, local time, fixed from then on. The slug is kebab-case (`export-csv`); the branch name keeps the plain slug, without the date.
 - `/task <slug>` finds its folder with `ls -d <home>/tasks/*/*-<slug>`. Old tasks (`tasks/<slug>/`, no `main` in the README) keep working; `status.py` only warns about them.
 
+## Extensions
+
+An extension holds the rules of one kind of source, in `<skill-dir>/extensions/<name>/`. This file only recognises when to use it:
+
+- **Aha**: `/task <id>` where the id looks like `<PREFIX>-<n>` or `<PREFIX>-<n>-<m>` (`AHSMT-85-2`) and `read_records` finds it. Read `<skill-dir>/extensions/aha/aha.md` before the first step and follow it together with this file, step by step. Any other id is a plain task.
+
 ## Where to open Claude
 
 - **In the home**, naming the task (`/task <slug>`): for decide, consolidate, plan and review, or to see every task. Read each repo's `AGENTS.md` / `CLAUDE.md` explicitly: they are not loaded up front from here, and the repo's `.claude/` settings and hooks do not apply.

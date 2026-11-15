@@ -46,6 +46,7 @@ Each link is written in one place; `status.py` derives the reverse:
 | Id | What | Born in |
 |---|---|---|
 | `AC-n` | an outcome that makes the task done: an acceptance criterion of the base text, or one settled at start | `acs.yaml` |
+| `N-n` | a note item of an Aha story, an item like `AC-n` (`extensions/aha/aha.md`) | `acs.yaml` |
 | `X-n` | item beyond the base text (nice to have), so scope growth stays visible | `acs.yaml` |
 | `AC-n.m`, `X-n.m` | requirement inside an item | `acs.yaml` |
 | `D-nn`, `V-nn`, `P-n`, `J-nnn` | decision, validation, pending item, journal note | their files |
