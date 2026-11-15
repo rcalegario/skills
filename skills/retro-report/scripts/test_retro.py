@@ -161,3 +161,14 @@ def test_tokens_once_per_message_and_cost(tmp_path, capsys):
 
     log.records.append({"type": "cost-state", "totalCostUSD": 1.2647382999999996})
     assert digest(tmp_path, log, capsys)["cost_usd"] == 1.2647
+
+
+def test_subagents_apart(tmp_path, capsys):
+    sub_dir = tmp_path / SID / "subagents"
+    sub_dir.mkdir(parents=True)
+    Log().prompt().bash("ls", usage=usage(1, 2, 3, 4)).bash("pwd").write(sub_dir / "agent-a1.jsonl")
+    (sub_dir / "agent-a1.meta.json").write_text('{"agentType": "general-purpose", "description": "Standards review"}')
+    d = digest(tmp_path, Log().prompt().call("Agent", {"prompt": "review"}), capsys)
+    assert d["calls"] == {"total": 1, "by_tool": {"Agent": 1}}
+    assert d["subagents"] == [{"id": "a1", "description": "Standards review", "calls": 2,
+                               "tokens": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4}}]

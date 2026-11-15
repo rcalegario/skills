@@ -156,6 +156,24 @@ def cost_usd(records):
     return round(float(totals[-1]), 4) if totals else None
 
 
+def subagents(path):
+    """Each subagent log beside the session (<session>/subagents/agent-<id>.jsonl), digested apart."""
+    out = []
+    for log in sorted((Path(path).parent / Path(path).stem / "subagents").glob("agent-*.jsonl")):
+        try:
+            records = read_records(log)
+        except NotASessionLog:
+            continue
+        meta = log.with_suffix(".meta.json")
+        try:
+            description = json.loads(meta.read_text()).get("description") if meta.is_file() else None
+        except ValueError:
+            description = None
+        out.append({"id": log.stem.removeprefix("agent-"), "description": description,
+                    "calls": len(calls(records)), "tokens": tokens(records)})
+    return out
+
+
 def _time(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
@@ -182,6 +200,7 @@ def digest(path):
         "search_streaks": search_streaks(cs),
         "tokens": tokens(records),
         "cost_usd": cost_usd(records),
+        "subagents": subagents(path),
     }
 
 
