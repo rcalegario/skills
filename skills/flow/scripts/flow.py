@@ -77,6 +77,12 @@ def git(root, *args):
     return proc.returncode, proc.stdout.strip()
 
 
+def task_root(root, task):
+    """The repo a task's commit lives in: its optional 'repo' path, else --root."""
+    repo = task.get("repo")
+    return os.path.abspath(os.path.expanduser(str(repo))) if repo else root
+
+
 def commit_exists(root, sha):
     code, _ = git(root, "rev-parse", "--verify", "--quiet", "%s^{commit}" % sha)
     return code == 0
@@ -167,14 +173,14 @@ def validate(data, root, specs=None, folder=None):
         if tstatus == "done":
             if not sha:
                 err("%s is done without a 'sha'" % tid)
-            elif not commit_exists(root, str(sha)):
+            elif not commit_exists(task_root(root, task), str(sha)):
                 err("%s sha %s is not in this repository" % (tid, sha))
             else:
-                shas.setdefault(str(sha), []).append(tid)
+                shas.setdefault((task_root(root, task), str(sha)), []).append(tid)
         elif sha:
             err("%s has a sha but status '%s'" % (tid, tstatus))
 
-    for sha, tids in shas.items():
+    for (_, sha), tids in shas.items():
         if len(tids) > 1:
             err("tasks %s share commit %s (one commit per task)" % (", ".join(tids), sha))
 
@@ -494,6 +500,7 @@ def set_task(path, root, specs, text, data, tasks, tid, value, commit):
 
     sha = None
     if value == "done":
+        root = task_root(root, tasks[tid])
         if commit is None:
             try:
                 rel = os.path.relpath(specs, root).replace("\\", "/")
@@ -515,7 +522,8 @@ def set_task(path, root, specs, text, data, tasks, tid, value, commit):
             print("ERROR: commit %s not found" % commit)
             return 1
         for other_id, other in tasks.items():
-            if other_id != tid and other.get("sha") and head_sha(root, str(other["sha"])) == sha:
+            if (other_id != tid and other.get("sha") and task_root(root, other) == root
+                    and head_sha(root, str(other["sha"])) == sha):
                 print("ERROR: %s is already recorded for %s; commit this task first" % (sha, other_id))
                 return 1
 

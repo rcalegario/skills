@@ -291,6 +291,32 @@ def test_set_rejects_unknown_target_or_value(repo):
     assert run(repo, "set", "demo", "AC1", "done") == 1
 
 
+def test_task_repo_records_and_validates_the_commit_in_that_repo(repo, tmp_path_factory):
+    other = tmp_path_factory.mktemp("other")
+    git(other, "init", "-q")
+    git(other, "config", "user.email", "t@example.com")
+    git(other, "config", "user.name", "t")
+    (other / "f.txt").write_text("v1\n")
+    git(other, "add", ".")
+    git(other, "commit", "-qm", "other init")
+    other_sha = commit_in(other, "f.txt", "v2\n")
+    commit(repo, "v2\n")
+    assert run(repo, "set", "demo", "T1", "done") == 0
+    text = feature(repo).read_text().replace(
+        "    covers: [AC2]\n", "    covers: [AC2]\n    repo: %s\n" % other, 1)
+    feature(repo).write_text(text)
+    assert run(repo, "set", "demo", "T2", "done", "--commit", other_sha) == 0
+    assert str(data(repo)["tasks"][1]["sha"]) == other_sha
+    assert run(repo, "check", "demo") == 0
+
+
+def commit_in(root, name, content):
+    (root / name).write_text(content)
+    git(root, "commit", "-qam", "change")
+    return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(root),
+                          stdout=subprocess.PIPE, universal_newlines=True).stdout.strip()
+
+
 # ---------------------------------------------------------------- set check
 
 def build_all(root):

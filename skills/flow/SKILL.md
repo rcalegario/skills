@@ -134,6 +134,7 @@ Each criterion is one line with one observable outcome, in one of four shapes:
 - **Riskiest first.** Among tasks that can start, lead with the one you are least sure works: a library or service the project never used, a data shape other tasks build on, a performance doubt, the part the user hesitated on. When the doubt is too big for a task, add a spike task before it (`prototype` skill) so the plan changes before the rest is built.
 - `blocked_by` lists only the tasks that truly gate this one.
 - **`commit`** is the final message, written now so the user approves it with the task. Match the repo: run `git log -n 10 --oneline` and copy its prefix style and language. The subject says why the change matters, not which files it touches.
+- `repo` (optional) is the path of the repo this task commits to, when it is not `--root` (a task that edits another repo, such as a docs repo). `set ... done` and `check` look for its commit there.
 - `verify` runs this task's tests; `test` (top level) runs the whole suite, read from the repo (`package.json`, `Makefile`, `pyproject.toml`, CI config).
 
 ### Checks
