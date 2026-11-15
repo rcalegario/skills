@@ -537,3 +537,86 @@ def test_untracked_specs_inside_root_do_not_block_done(tmp_path):
     write_feature(specs / "features" / "demo")
     commit(tmp_path, "v2\n")
     assert run_split(tmp_path, specs, "set", "demo", "T1", "done") == 0
+
+
+# ---------------------------------------------------------------- new and roadmap --approve
+
+def test_new_writes_a_draft_skeleton_and_the_spec(repo):
+    assert run(repo, "new", "F1.1-csv", "--title", "CSV export", "--size", "M", "--repo", "ponto-api",
+               "--decisions", "D-23,D-24", "--validations", "V-01", "--test", "npm test") == 0
+    folder = repo / ".specs" / "features" / "F1.1-csv"
+    d = yaml.safe_load((folder / "feature.yaml").read_text())
+    assert (d["id"], d["title"], d["size"], d["status"], d["repo"], d["test"]) == \
+        ("F1.1-csv", "CSV export", "M", "draft", "ponto-api", "npm test")
+    assert d["story"] == {"decisions": ["D-23", "D-24"], "validations": ["V-01"]}
+    assert d["approved"] == {"spec": None, "tasks": None} and d["base"] is None
+    assert (folder / "spec.md").read_text().startswith("# CSV export\n")
+
+
+def test_new_refuses_to_overwrite_a_feature(repo, capsys):
+    assert run(repo, "new", "demo", "--title", "Again", "--size", "S") == 1
+    assert "already exists" in capsys.readouterr().out
+    assert data(repo)["title"] == "Demo feature"
+
+
+def test_new_links_a_roadmap_feature_and_rejects_an_unknown_one(repo, capsys):
+    write_roadmap(repo)
+    assert run(repo, "new", "F1.1-csv", "--title", "CSV", "--size", "M", "--roadmap", "F1.1") == 0
+    path = repo / ".specs" / "features" / "F1.1-csv" / "feature.yaml"
+    assert yaml.safe_load(path.read_text())["roadmap"] == "F1.1"
+    assert run(repo, "new", "F9.9-x", "--title", "X", "--size", "M", "--roadmap", "F9.9") == 1
+    assert "F9.9 is not a feature" in capsys.readouterr().out
+    assert not (repo / ".specs" / "features" / "F9.9-x").exists()
+
+
+def test_roadmap_approve_stamps_today_and_keeps_the_rest(repo):
+    write_roadmap(repo, ROADMAP.replace("approved: 2026-11-10\n", ""))
+    assert run(repo, "roadmap", "--approve") == 0
+    text = (repo / ".specs" / "roadmap.yaml").read_text()
+    assert yaml.safe_load(text)["approved"] == datetime.date.today()
+    assert text == ROADMAP.replace("approved: 2026-11-10", "approved: %s" % datetime.date.today().isoformat())
+
+
+def test_roadmap_approve_refuses_an_invalid_roadmap(repo):
+    broken = ROADMAP.replace("approved: 2026-11-10\n", "").replace("blocked_by: [F1.1]", "blocked_by: [F9.9]")
+    write_roadmap(repo, broken)
+    assert run(repo, "roadmap", "--approve") == 1
+    assert (repo / ".specs" / "roadmap.yaml").read_text() == broken
+
+
+# ---------------------------------------------------------------- finding
+
+def findings(root):
+    return (data(root).get("review") or {}).get("findings")
+
+
+def test_finding_creates_the_review_block_and_appends(repo):
+    assert run(repo, "finding", "demo", "--text", "AC2 test misses a quote", "--action", "fix", "--task", "T3") == 0
+    assert run(repo, "finding", "demo", "--text", "Rename writer", "--action", "wontfix", "--reason", "Matches naming") == 0
+    assert findings(repo) == [
+        {"text": "AC2 test misses a quote", "action": "fix", "task": "T3"},
+        {"text": "Rename writer", "action": "wontfix", "reason": "Matches naming"}]
+    assert "status: approved   # keep this comment" in feature(repo).read_text()
+
+
+def test_finding_none_records_a_clean_review(repo):
+    assert run(repo, "finding", "demo", "--none") == 0
+    assert findings(repo) == []
+
+
+def test_finding_none_is_refused_when_findings_exist(repo):
+    run(repo, "finding", "demo", "--text", "x", "--action", "wontfix", "--reason", "y")
+    assert run(repo, "finding", "demo", "--none") == 1
+    assert len(findings(repo)) == 1
+
+
+@pytest.mark.parametrize("extra", [["--action", "fix"], ["--action", "wontfix"]])
+def test_finding_needs_its_task_or_reason(repo, extra):
+    assert run(repo, "finding", "demo", "--text", "x", *extra) == 1
+    assert findings(repo) is None
+
+
+def test_finding_appends_to_an_empty_list(repo):
+    run(repo, "finding", "demo", "--none")
+    assert run(repo, "finding", "demo", "--text", "x", "--action", "wontfix", "--reason", "y") == 0
+    assert len(findings(repo)) == 1

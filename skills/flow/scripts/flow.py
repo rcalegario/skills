@@ -8,9 +8,14 @@ Commands:
   set     <feature> T<n> doing|done [--commit X]
                                             start a task, or record its commit (HEAD by default) and close it
   set     <feature> AC<n> pass|fail         record the result of a criterion's checks
+  finding <feature> --text T --action fix --task T3 | --action wontfix --reason R | --none
+                                            record a review finding (or a clean review)
   review  <feature>                         every task done: building -> review
   finish  <feature>                         every check pass and review recorded: review -> done
-  roadmap                                   validate <specs>/roadmap.yaml, show progress and the features ready to start
+  roadmap [--approve]                       validate <specs>/roadmap.yaml, show progress and the features ready to start;
+                                            --approve stamps today as `approved` once it is valid
+  new     <feature> --title T --size S|M|L [--roadmap F] [--repo R] [--decisions D-1,D-2] [--validations V-1] [--test CMD]
+                                            create the draft feature.yaml and spec.md
 
 <feature> is a folder name under <specs>/features/, a folder path, or a path to feature.yaml.
 <specs> is --specs, default <root>/.specs; --root is the git repository the task commits live in.
@@ -19,6 +24,7 @@ A feature's roadmap status comes from the feature.yaml whose `roadmap:` names it
 import argparse
 import datetime
 import glob
+import json
 import os
 import re
 import subprocess
@@ -720,7 +726,7 @@ def roadmap_status(rid, links):
     return folders[0][1] if folders else "planned"
 
 
-def cmd_roadmap(specs):
+def cmd_roadmap(specs, approve=False):
     data = load_roadmap(specs)
     if data is None:
         print("ERROR: %s does not exist" % roadmap_path(specs))
@@ -733,6 +739,12 @@ def cmd_roadmap(specs):
         print("ERROR: %s" % e)
     if errors:
         return 1
+    if approve:
+        today = datetime.date.today().isoformat()
+        text, _ = load(roadmap_path(specs))
+        edit(roadmap_path(specs), text, lambda lines: set_top(lines, "approved", today, after="vision"),
+             lambda d: str(d.get("approved")) == today)
+        print("Roadmap approved %s" % today)
 
     features = roadmap_features(data)
     status = {fid: roadmap_status(fid, links) for fid in features}
@@ -750,6 +762,96 @@ def cmd_roadmap(specs):
         print("Ready to start: " + ", ".join("%s %s" % (f, features[f][1].get("title")) for f in ready))
     elif all(s == "done" for s in status.values()):
         print("Roadmap complete.")
+    return 0
+
+
+# ---------------------------------------------------------------- finding
+
+def cmd_finding(path, args):
+    text, data = load(path)
+    review = data.get("review") if isinstance(data.get("review"), dict) else {}
+    existing = as_list(review.get("findings"))
+    if args.none:
+        if existing:
+            print("ERROR: the review already has %d finding(s)" % len(existing))
+            return 1
+        item = None
+    else:
+        if not args.text or not args.action:
+            print("ERROR: a finding needs --text and --action (or use --none for a clean review)")
+            return 1
+        if args.action == "fix" and not args.task:
+            print("ERROR: a fix finding names the task that fixes it: --task T<n>")
+            return 1
+        if args.action == "wontfix" and not args.reason:
+            print("ERROR: a wontfix finding needs --reason")
+            return 1
+        item = ["    - text: %s\n" % json.dumps(args.text, ensure_ascii=False),
+                "      action: %s\n" % args.action]
+        if args.task:
+            item.append("      task: %s\n" % args.task)
+        if args.reason:
+            item.append("      reason: %s\n" % json.dumps(args.reason, ensure_ascii=False))
+
+    def change(lines):
+        top = next((i for i, l in enumerate(lines) if re.match(r"^review:(\s|$)", l)), None)
+        if top is None:
+            lines.append("review:\n")
+            top = len(lines) - 1
+        elif lines[top].split("#")[0].strip() != "review:":
+            lines[top] = "review:\n"
+        end = block_end(lines, top, 0)
+        found = next((i for i in range(top + 1, end) if re.match(r"^  findings:(\s|$)", lines[i])), None)
+        if found is None:
+            lines.insert(top + 1, "  findings:\n")
+            found = top + 1
+        elif lines[found].split("#")[0].strip() != "findings:":
+            lines[found] = "  findings:\n" if item else "  findings: []\n"
+        if item is None:
+            lines[found] = "  findings: []\n"
+            return
+        lines[block_end(lines, found, 2):block_end(lines, found, 2)] = item
+
+    edit(path, text, change, lambda d: len(as_list((d.get("review") or {}).get("findings"))) ==
+         len(existing) + (0 if item is None else 1))
+    print("%s: %s" % (data.get("id"), "clean review recorded" if item is None else "finding recorded"))
+    return 0
+
+
+# ---------------------------------------------------------------- new
+
+def cmd_new(specs, args):
+    folder = os.path.join(specs, "features", args.feature)
+    if os.path.exists(folder):
+        print("ERROR: %s already exists" % folder)
+        return 1
+    if args.roadmap:
+        data = load_roadmap(specs)
+        if data is None or args.roadmap not in roadmap_features(data):
+            print("ERROR: roadmap: %s is not a feature of %s" % (args.roadmap, roadmap_path(specs)))
+            return 1
+    fields = {"id": args.feature, "title": args.title}
+    if args.roadmap:
+        fields["roadmap"] = args.roadmap
+    if args.repo:
+        fields["repo"] = args.repo
+    fields.update(size=args.size, status="draft", approved={"spec": None, "tasks": None}, base=None)
+    if args.test:
+        fields["test"] = args.test
+    story = {k: [i.strip() for i in v.split(",") if i.strip()]
+             for k, v in (("decisions", args.decisions), ("validations", args.validations)) if v}
+    if story:
+        fields["story"] = story
+    fields.update(acceptance=[], tasks=[], checks=[])
+    os.makedirs(folder)
+    with open(os.path.join(folder, "feature.yaml"), "w", encoding="utf-8", newline="") as fh:
+        fh.write(yaml.safe_dump(fields, sort_keys=False, allow_unicode=True, default_flow_style=None))
+    template = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "templates", "spec.md")
+    with open(template, encoding="utf-8") as fh:
+        spec = fh.read().replace("{title}", args.title)
+    with open(os.path.join(folder, "spec.md"), "w", encoding="utf-8", newline="") as fh:
+        fh.write(spec)
+    print("Created %s: write the criteria in spec.md and feature.yaml, then `check`" % folder)
     return 0
 
 
@@ -771,14 +873,35 @@ def main(argv=None):
     set_.add_argument("target", help="a task id (T1) or a criterion id (AC1)")
     set_.add_argument("value", help="doing | done for a task, pass | fail for a criterion")
     set_.add_argument("--commit", help="with done: record this commit instead of HEAD (for resume)")
-    sub.add_parser("roadmap")
+    roadmap = sub.add_parser("roadmap")
+    roadmap.add_argument("--approve", action="store_true", help="stamp today as the approval date, once the roadmap is valid")
+    finding = sub.add_parser("finding")
+    finding.add_argument("feature")
+    finding.add_argument("--text")
+    finding.add_argument("--action", choices=("fix", "wontfix"))
+    finding.add_argument("--task", help="with fix: the task that fixes it")
+    finding.add_argument("--reason", help="with wontfix: why, as the user agreed")
+    finding.add_argument("--none", action="store_true", help="record a clean review (findings: [])")
+    new = sub.add_parser("new")
+    new.add_argument("feature", help="the folder name and id, e.g. F1.1-csv-export")
+    new.add_argument("--title", required=True)
+    new.add_argument("--size", required=True, choices=SIZES)
+    new.add_argument("--roadmap", help="the roadmap feature id this delivers")
+    new.add_argument("--repo", help="repo name, when the work is a /task story")
+    new.add_argument("--decisions", help="task decisions it builds on, comma separated")
+    new.add_argument("--validations", help="task validations that prove it, comma separated")
+    new.add_argument("--test", help="the whole-suite command")
     args = parser.parse_args(argv)
 
     root = os.path.abspath(args.root)
     specs = os.path.abspath(args.specs) if args.specs else default_specs(root)
     if args.command == "roadmap":
-        return cmd_roadmap(specs)
+        return cmd_roadmap(specs, args.approve)
+    if args.command == "new":
+        return cmd_new(specs, args)
     path = resolve(args.feature, specs)
+    if args.command == "finding":
+        return cmd_finding(path, args)
     if args.command == "approve":
         return cmd_approve(path, root, specs, args.step)
     if args.command == "set":
