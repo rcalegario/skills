@@ -1,0 +1,11 @@
+# acs.yaml - one entry per outcome (AC-n) and extra beyond the base text (X-n).
+# Each requirement is one verifiable thing and points to ONE root decision.
+# Optional per item: comment (how we read it), pr_note (text the PR must carry), status: dropped (X-n only).
+
+- id: AC-1
+  text: "<outcome, verbatim from the base text when it has acceptance criteria>"
+  requirements:
+    - id: AC-1.1
+      text: "<one verifiable thing>"
+      decision: D-01
+      validations: [V-01]

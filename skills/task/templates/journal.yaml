@@ -1,0 +1,9 @@
+# journal.yaml - one note per relevant change, in date order. Old notes are never edited.
+# type: investigation | decision | correction | reorganization | pending | plan | validation | review
+
+- id: J-001
+  date: YYYY-MM-DD
+  type: investigation
+  text: >
+    Task folder created from the base text.
+  refs: []

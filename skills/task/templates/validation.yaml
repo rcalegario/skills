@@ -1,0 +1,14 @@
+id: V-nn
+title: "<what is checked, in one sentence>"
+status: pending             # pending | passed | failed | dropped
+date: null                  # date of the last run
+where: <template | clone | PR | CI | ...>
+depends_on: []              # features or other tasks that must exist first
+decides: []                 # spike only: the decisions this experiment settles; omit for a proof
+how: |
+  Command or steps.
+expected: |
+  The result that counts as passed.
+evidence: |
+  Date, environment and output of the last run.
+attachments: []             # files under validations/evidence/
