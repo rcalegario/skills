@@ -117,3 +117,30 @@ def test_unmatched_error_is_other(tmp_path, capsys):
 def test_file_contents_are_not_failures(tmp_path, capsys):
     log = Log().prompt().call("Read", {"file_path": "retro.md"}, result="Finding: command not found: python")
     assert digest(tmp_path, log, capsys)["failures"] == {}
+
+
+def test_identical_calls_are_repeats(tmp_path, capsys):
+    long_cmd = "echo " + "y" * 200
+    log = (Log().prompt().bash("git status").bash("ls").bash("git status").bash(long_cmd).bash(long_cmd)
+           .call("Read", {"file_path": "a.py"}).call("Read", {"file_path": "a.py", "offset": 10})
+           .bash("git status"))
+    repeats = digest(tmp_path, log, capsys)["repeats"]
+    assert repeats == [{"tool": "Bash", "input": "git status", "count": 3},
+                       {"tool": "Bash", "input": long_cmd[:120], "count": 2}]
+
+
+def test_search_streak_of_three(tmp_path, capsys):
+    log = (Log().prompt()
+           .bash("cd /work; grep -rn NOW-5 tasks | head")            # 1 search
+           .bash("for d in */; do echo $d; grep -c x $d/a; done")    # 2 search: loop words and echo are neutral
+           .call("Grep", {"pattern": "NOW-5"})                       # 3 search
+           .call("Read", {"file_path": "now.md"})                    # 4 search
+           .bash("python3 status.py .")                              # 5 not a search: breaks the run
+           .bash("cat a").bash("ls b")                               # 6, 7: only two in a row
+           .call("Edit", {"file_path": "a"}))
+    streaks = digest(tmp_path, log, capsys)["search_streaks"]
+    assert streaks == [{"calls": [1, 2, 3, 4], "commands": [
+        "cd /work; grep -rn NOW-5 tasks | head",
+        "for d in */; do echo $d; grep -c x $d/a; done",
+        "Grep NOW-5",
+        "Read now.md"]}]

@@ -21,6 +21,13 @@ ERROR_PATTERNS = [
     ("permission_denied", re.compile(r"Permission denied|EACCES|Operation not permitted", re.I)),
 ]
 LINE_MAX = 200
+INPUT_MAX = 120
+STREAK_MIN = 3
+SEARCH_TOOLS = {"Grep": "pattern", "Glob": "pattern", "Read": "file_path"}
+SEARCH_HEADS = {"grep", "rg", "find", "ls", "cat", "head", "tail", "sed", "wc"}
+# Words that neither search nor change anything: they keep a shell search a search.
+NEUTRAL_HEADS = {"cd", "echo", "for", "do", "done", "if", "then", "else", "fi", "sort", "uniq", "xargs", "true"}
+SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")
 
 
 class NotASessionLog(Exception):
@@ -90,6 +97,45 @@ def failures(cs):
     return {cls: out[cls] for cls in order if cls in out}
 
 
+def call_text(c):
+    """What a call asked for, in one line: the command, the searched value, or the input as JSON."""
+    if c["tool"] == "Bash":
+        return str(c["input"].get("command", ""))
+    key = SEARCH_TOOLS.get(c["tool"])
+    if key and key in c["input"]:
+        return f"{c['tool']} {c['input'][key]}"
+    return json.dumps(c["input"], sort_keys=True)
+
+
+def repeats(cs):
+    """Calls made more than once with identical input, in order of first use."""
+    seen = Counter((c["tool"], json.dumps(c["input"], sort_keys=True)) for c in cs)
+    shown = {(c["tool"], json.dumps(c["input"], sort_keys=True)): call_text(c) for c in cs}
+    return [{"tool": key[0], "input": shown[key][:INPUT_MAX], "count": n} for key, n in seen.items() if n > 1]
+
+
+def is_search(c):
+    if c["tool"] in SEARCH_TOOLS:
+        return True
+    if c["tool"] != "Bash":
+        return False
+    heads = [seg.split()[0].lstrip("(") for seg in SEGMENT_SPLIT.split(call_text(c)) if seg.split()]
+    return any(h in SEARCH_HEADS for h in heads) and all(h in SEARCH_HEADS | NEUTRAL_HEADS for h in heads)
+
+
+def search_streaks(cs):
+    """Runs of STREAK_MIN or more search calls in a row."""
+    runs, run = [], []
+    for c in cs + [None]:
+        if c is not None and is_search(c):
+            run.append(c)
+            continue
+        if len(run) >= STREAK_MIN:
+            runs.append({"calls": [r["n"] for r in run], "commands": [call_text(r)[:INPUT_MAX] for r in run]})
+        run = []
+    return runs
+
+
 def _time(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
@@ -112,6 +158,8 @@ def digest(path):
         "duration_s": int((_time(stamps[-1]) - _time(stamps[0])).total_seconds()) if stamps else 0,
         "calls": {"total": len(cs), "by_tool": dict(sorted(Counter(c["tool"] for c in cs).items()))},
         "failures": failures(cs),
+        "repeats": repeats(cs),
+        "search_streaks": search_streaks(cs),
     }
 
 
