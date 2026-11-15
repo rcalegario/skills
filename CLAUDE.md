@@ -9,3 +9,4 @@ Fresh clone or new machine → follow SETUP.md.
 - Each skill's history was imported with paths rewritten under `skills/<name>/`, so `git log -- skills/<name>` shows it. Keep commits per skill, with the skill as the scope: `feat(flow): ...`. Conventional Commits, English, subject says why.
 - The repo is public: write no names, emails or absolute home paths into it; personal settings go in a gitignored file next to a versioned `*.example.*`.
 - Third-party skills are referenced, never copied in.
+- Run a skill's tests from inside its folder, with the `test:` command from `skills.yaml` (`cd skills/<name>` in its own Bash call). From `skills/` or the repo root, pytest leaves a `.pytest_cache` outside any skill folder.
