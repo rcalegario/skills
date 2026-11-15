@@ -4,12 +4,23 @@
 """
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 import yaml
+
+
+# Error classes read off a result's text, after tokeneconomizer's observe.py; first match wins.
+ERROR_PATTERNS = [
+    ("command_missing", re.compile(r"command not found|: not found\b|is not recognized", re.I)),
+    ("module_missing", re.compile(r"ModuleNotFoundError|No module named|Cannot find module", re.I)),
+    ("file_missing", re.compile(r"No such file or directory|File does not exist|ENOENT", re.I)),
+    ("permission_denied", re.compile(r"Permission denied|EACCES|Operation not permitted", re.I)),
+]
+LINE_MAX = 200
 
 
 class NotASessionLog(Exception):
@@ -60,6 +71,25 @@ def result_text(content):
     return content if isinstance(content, str) else ""
 
 
+def failures(cs):
+    """Calls grouped by error class: a line matching a pattern, else `other` when the tool said is_error.
+
+    Only shell output and results marked is_error are scanned: a Read of a file that quotes an error is no failure."""
+    out = {}
+    for c in cs:
+        if c["tool"] != "Bash" and not c["is_error"]:
+            continue
+        lines = c["result"].splitlines()
+        hit = next(((cls, line) for line in lines for cls, rx in ERROR_PATTERNS if rx.search(line)), None)
+        if hit is None and c["is_error"]:
+            hit = ("other", next((ln for ln in lines if ln.strip()), ""))
+        if hit:
+            cls, line = hit
+            out.setdefault(cls, []).append({"call": c["n"], "tool": c["tool"], "line": line.strip()[:LINE_MAX]})
+    order = [cls for cls, _ in ERROR_PATTERNS] + ["other"]
+    return {cls: out[cls] for cls in order if cls in out}
+
+
 def _time(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
@@ -81,6 +111,7 @@ def digest(path):
         "end": _iso(stamps[-1]) if stamps else None,
         "duration_s": int((_time(stamps[-1]) - _time(stamps[0])).total_seconds()) if stamps else 0,
         "calls": {"total": len(cs), "by_tool": dict(sorted(Counter(c["tool"] for c in cs).items()))},
+        "failures": failures(cs),
     }
 
 

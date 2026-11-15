@@ -87,3 +87,33 @@ def test_not_a_session_log(tmp_path, capsys):
     code, out, err = run(capsys, "digest", str(other))
     assert code == 1
     assert err.strip() == f"{other} is not a Claude Code session log"
+
+
+def test_failure_classes_read_from_text(tmp_path, capsys):
+    long_tail = "x" * 300
+    log = (Log().prompt()
+           .bash("cat <<EOF | python", result="line one\n(eval):27: command not found: python")
+           .bash("python -c 'import yaml'", result="ModuleNotFoundError: No module named 'yaml'", is_error=True)
+           .call("Read", {"file_path": "/nope"}, result="File does not exist.", is_error=True)
+           .bash("cat /nope", result=f"cat: /nope: No such file or directory {long_tail}")
+           .bash("touch /etc/x", result="touch: /etc/x: Permission denied")
+           .bash("ls", result="fine"))
+    f = digest(tmp_path, log, capsys)["failures"]
+    assert f["command_missing"] == [{"call": 1, "tool": "Bash", "line": "(eval):27: command not found: python"}]
+    assert f["module_missing"] == [{"call": 2, "tool": "Bash",
+                                    "line": "ModuleNotFoundError: No module named 'yaml'"}]
+    assert [e["call"] for e in f["file_missing"]] == [3, 4]
+    assert len(f["file_missing"][1]["line"]) == 200
+    assert f["permission_denied"] == [{"call": 5, "tool": "Bash", "line": "touch: /etc/x: Permission denied"}]
+    assert "other" not in f
+
+
+def test_unmatched_error_is_other(tmp_path, capsys):
+    log = Log().prompt().bash("make", result="Exit code 2\nbuild broke", is_error=True).bash("echo", result="ok")
+    f = digest(tmp_path, log, capsys)["failures"]
+    assert f == {"other": [{"call": 1, "tool": "Bash", "line": "Exit code 2"}]}
+
+
+def test_file_contents_are_not_failures(tmp_path, capsys):
+    log = Log().prompt().call("Read", {"file_path": "retro.md"}, result="Finding: command not found: python")
+    assert digest(tmp_path, log, capsys)["failures"] == {}
