@@ -16,4 +16,4 @@ TODO: who has the problem and what it costs them today, in 2-3 sentences.
 
 ## Notes
 
-<!-- Decisions taken while specifying; for M, the design in a few lines (modules that change, new data shapes). Delete if empty. -->
+<!-- Decisions taken while specifying; for M, the design in a few lines (modules that change, new data shapes), shown as a diff of the file or call tree when that is clearer (see the flow skill's reference/visuals.md). Delete if empty. -->

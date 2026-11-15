@@ -204,7 +204,9 @@ review:                        # filled at CLOSE
 
 `spec.md` holds the rest: Problem, Assumptions, Out of scope and Notes (decisions taken along the way; for M, the design in a few lines). `check` refuses an approved M or L feature whose `spec.md` is missing or still has a `TODO`.
 
-For L, `design.md` sits next to them only when a choice needs explaining (a new module, a data model, a library, a flow across components): the components touched, the data shape, the chosen option and the one you rejected with why. A small diagram (file tree, call flow, Mermaid) beats a paragraph when the flow is not obvious. Ask the user only about choices that change what they will see or maintain.
+For L, `design.md` sits next to them only when a choice needs explaining (a new module, a data model, a library, a flow across components): the components touched, the data shape, the chosen option and the one you rejected with why. Ask the user only about choices that change what they will see or maintain.
+
+`spec.md` and `design.md` are for the user to read: where a shape, a flow or a change is the point, show it with the visuals in `<skill-dir>/reference/visuals.md` (call tree, file tree, `diff`, Mermaid) instead of describing it.
 
 ## BUILD
 
