@@ -1,0 +1,69 @@
+# skills.yaml - each own skill and the skills it was built from; checked by scripts/skills.py validate.
+# own[].test runs from skills/<name>/ in the pre-commit hook.
+# A reference is internal (skill: <own name>) or external (repo, path, commit: <sha>|unknown, license).
+# relation: fork | derived | inspired. took: what was taken, in one line.
+
+own:
+  - name: flow
+    test: uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts
+    references:
+      - skill: tlc-spec-driven
+        relation: derived
+        took: Criteria proved by checks, with every gate enforced by a tested script
+      - skill: spec-lite
+        relation: derived
+        took: YAML state for roadmap and features, changed only through the script
+      - repo: https://github.com/humanlayer/skills
+        path: plugins/show-me/skills/show-me
+        commit: unknown
+        license: MIT
+        relation: inspired
+        took: Shapes, flows and changes shown as visuals in the docs people read
+
+  - name: task
+    test: uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts
+    references:
+      - repo: https://github.com/mattpocock/skills
+        path: skills/productivity/grilling
+        commit: unknown
+        relation: inspired
+        took: Decisions asked in rounds over a design tree, each with a recommended answer
+      - repo: https://github.com/mattpocock/skills
+        path: skills/engineering/to-spec
+        commit: unknown
+        relation: inspired
+        took: Turning a base text into outcomes and requirements before any code
+      - repo: https://github.com/mattpocock/skills
+        path: skills/engineering/to-tickets
+        commit: unknown
+        relation: inspired
+        took: Splitting the work into slices that each ship on their own
+
+  - name: spec-lite
+    test: uv run --no-project --with pyyaml python -m unittest discover -s tests
+    references:
+      - skill: tlc-spec-driven
+        relation: derived
+        took: Spec, tasks, execute and validate per feature, made lighter for personal projects
+
+  - name: tlc-spec-driven
+    test: python3 -I scripts/selftest.py && python3 -I -m unittest discover -s tests
+    references:
+      - repo: https://github.com/tech-leads-club/agent-skills
+        path: packages/skills-catalog/skills/(development)/tlc-spec-driven
+        commit: 8658b66
+        license: CC-BY-4.0
+        relation: fork
+        took: The whole skill at upstream 4.1.0; local changes are listed in its MODS.md
+      - repo: https://github.com/humanlayer/skills
+        path: plugins/show-me/skills/show-me
+        commit: unknown
+        license: MIT
+        relation: inspired
+        took: A copy of show-me in references/show-me.md, credited in its header
+
+  - name: idea-triage
+    test: ""
+    references: []
+
+installed: []
