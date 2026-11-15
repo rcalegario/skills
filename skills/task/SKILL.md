@@ -16,6 +16,8 @@ start ──► decide ──► consolidate ──► plan (/flow) ──► bu
 
 Write every file in English. Talk to the user in the language they use.
 
+The `.md` files (context, `brief.md`, the specs) are for the user to read: where a shape, a flow or a change is the point, show it with the visuals in `~/.claude/skills/flow/reference/visuals.md` (call tree, file tree, `diff`, Mermaid) instead of describing it.
+
 ## Commands
 
 | Command | Does |
@@ -58,7 +60,7 @@ Runs when `/task <slug>` finds no task folder.
 1. **Read the base.** Ask whether there is a base text: an issue, a ticket pasted or linked, a note, a draft. Read it whole, comments included (they often carry what the description lacks). Then invoke the `grilling` skill on it until the problem, who it serves, what stays out, and the outcomes that make it done are settled. When the base text has acceptance criteria, they are the outcomes; grill the gaps.
 2. **Repos.** Ask which repos the work changes, proposing the most likely ones. For each, create a worktree inside the task folder: `git -C <origin> worktree add <task>/repos/<repo> -b <branch>`, with the branch named by the repo's convention (fallback `<type>/<slug>`). For a repo whose checkout is large (hundreds of MB), propose `git sparse-checkout set <dirs>` on the worktree, with only the folders the work touches. Read each repo's `AGENTS.md` / `CLAUDE.md` now: they do not load on their own from here.
 3. **Folder.** Create it from the templates: `README.md` (the base text verbatim, with its link; the problem, who it serves, what stays out), `CLAUDE.md`, empty `pending.yaml`, `journal.yaml` with J-001. Fill `repos:` in the README header.
-4. **Facts.** Read the code the work touches and write `context/now.md` with code `NOW`: facts only, each section with an id.
+4. **Facts.** Read the code the work touches and write `context/now.md` with code `NOW`: facts only, each section with an id, the current flow or structure drawn where it is the point (call tree, file tree, Mermaid).
 5. **Items.** Propose, in one message, the split of every outcome from step 1 (written as `AC-n`; anything beyond the base text as `X-n`) into requirements, with a first root decision for each. Write `acs.yaml`, the root decisions (`open` or `proposed`) and their validations only after the user confirms the split.
 6. Run `status.py`, commit, and continue with **decide**.
 
@@ -109,7 +111,7 @@ Done when the frontier is empty, or every remaining decision waits on someone in
 
 ## consolidate
 
-Write `brief.md` from the template: **Today** from `context/`, **Target** per item and where it departs from the AC text, **Path** from the decided tree, **Open items** from the agenda in `status.py`. Cite ids; restate no decision in full. Set `date` to today. Journal, `status.py`, commit.
+Write `brief.md` from the template: **Today** from `context/`, **Target** per item and where it departs from the AC text, **Path** from the decided tree, **Open items** from the agenda in `status.py`. Cite ids; restate no decision in full. Target shows the change as a `diff` over today's shape when the change is structural; Path draws the order of the work when it is not linear. Set `date` to today. Journal, `status.py`, commit.
 
 With `--publish`, the reader is someone outside the task: write a version without task ids (each id replaced by what it names) and publish it the way the user picks: Claude Docs or an Artifact. Record the link in the journal.
 

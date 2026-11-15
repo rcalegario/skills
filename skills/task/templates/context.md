@@ -8,7 +8,7 @@ sources:
 
 # How it works today
 
-Facts about the current state only. Proposals and choices live in `decisions/`.
+Facts about the current state only. Proposals and choices live in `decisions/`. Draw the current flow or structure where it is the point (call tree, file tree, Mermaid; see the flow skill's `reference/visuals.md`).
 
 ## NOW-1 <section>
 
