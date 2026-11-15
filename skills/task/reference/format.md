@@ -67,7 +67,7 @@ Each link is written in one place; `status.py` derives the reverse:
 
 ## Status
 
-Computed by `status.py`, never written by hand. An item's status is the lowest of its requirements:
+Computed by `status.py`, never written by hand. The other YAML fields with an id, a date or a status are written by `task.py` (see the task `SKILL.md`). An item's status is the lowest of its requirements:
 
 | Status | When |
 |---|---|
@@ -109,7 +109,7 @@ One entry per action with someone else. `with` names who; `refs` the ids behind 
 
 ## Journal
 
-Every relevant change adds a note at the end, with the next `J-nnn`: code read, decision created or changed, validation run, pending posted, reorganization. Old notes stay as written; a fix is a new note with `type: correction`.
+Every relevant change adds a note at the end (`task.py journal` picks the next `J-nnn` and the date): code read, decision created or changed, validation run, pending posted, reorganization. Old notes stay as written; a fix is a new note with `type: correction`.
 
 ## Repos
 
