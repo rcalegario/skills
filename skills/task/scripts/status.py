@@ -7,6 +7,7 @@ Usage:
     python status.py [task-dir] --gate spec --feature F   fail when feature F links a decision still open or awaiting a spike
     python status.py [task-dir] --gate pr       also fail when an item is neither concluded nor carries a pr_note
     python status.py [task-dir] --pr-notes      print the pr_note of every item and active decision, then exit
+    python status.py [task-dir] --find ID       print <file>:<line> of each place ID is defined, without the checks
 
 Exits 1 when it finds a failure. The folder layout is in ../reference/format.md.
 """
@@ -460,18 +461,16 @@ class Task:
             out.append("## Validations\n\n" + "\n".join(vals))
         return "\n\n".join(out)
 
-
-def find(task, ident):
-    """Print each place ident is defined: a YAML `id:` line or a Markdown heading."""
-    defined = re.compile(r"""^\s*(?:-\s+)?id:\s*["']?%s["']?\s*$|^#+\s+%s(?![\w.-])""" % (re.escape(ident), re.escape(ident)))
-    hits = []
-    for path in sorted(task.text_files()):
-        with open(path, encoding="utf-8") as fh:
-            for n, line in enumerate(fh, 1):
-                if defined.match(line):
-                    hits.append("%s:%d" % (os.path.relpath(path, task.root).replace("\\", "/"), n))
-    print("\n".join(hits) if hits else "%s is not defined in %s" % (ident, task.root))
-    return 0 if hits else 1
+    def find(self, ident):
+        """Each place ident is defined, as <file>:<line>: a YAML `id:` line or a Markdown heading."""
+        defined = re.compile(r"""^\s*(?:-\s+)?id:\s*["']?%s["']?\s*$|^#+\s+%s(?![\w.-])""" % (re.escape(ident), re.escape(ident)))
+        hits = []
+        for path in sorted(self.text_files()):
+            with open(path, encoding="utf-8") as fh:
+                for n, line in enumerate(fh, 1):
+                    if defined.match(line):
+                        hits.append("%s:%d" % (os.path.relpath(path, self.root).replace("\\", "/"), n))
+        return hits
 
 
 def main(argv=None):
@@ -489,7 +488,9 @@ def main(argv=None):
         return 2
     task = Task(args.task)
     if args.find:
-        return find(task, args.find)
+        hits = task.find(args.find)
+        print("\n".join(hits) if hits else "%s is not defined" % args.find)
+        return 0 if hits else 1
     task.check()
     if args.pr_notes:
         print(task.pr_notes())

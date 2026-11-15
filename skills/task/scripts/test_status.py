@@ -308,6 +308,20 @@ def test_find_prints_where_an_id_is_defined(task, capsys):
     assert capsys.readouterr().out.strip() == "acs.yaml:4"
 
 
+def test_find_prints_every_definition(task, capsys):
+    write(task, ".specs/features/F1.1-a/feature.yaml", "tasks:\n  - id: T1\n")
+    write(task, ".specs/features/F1.2-b/feature.yaml", "tasks:\n  - id: T1\n")
+    assert run(task, "--find", "T1") == 0
+    assert capsys.readouterr().out.split() == [".specs/features/F1.1-a/feature.yaml:2",
+                                               ".specs/features/F1.2-b/feature.yaml:2"]
+
+
+def test_find_skips_the_checks(task, capsys):
+    write(task, "README.md", "see D-77\n")
+    assert run(task, "--find", "D-01") == 0
+    assert capsys.readouterr().out.strip() == "decisions/D-01-source.yaml:1"
+
+
 def test_find_unknown_id_fails(task, capsys):
     assert run(task, "--find", "D-99") == 1
-    assert "D-99 is not defined" in capsys.readouterr().out
+    assert capsys.readouterr().out.strip() == "D-99 is not defined"
