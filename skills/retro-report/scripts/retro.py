@@ -264,15 +264,28 @@ def _field(data, key, check, problem, errors, label=None, required=True):
         errors.append(f"{label or key}: {problem}")
 
 
-def _load(path, errors):
+def _load(path, errors, label=None):
+    label = label or path.name
     if not path.is_file():
-        errors.append(f"{path.name}: missing")
+        errors.append(f"{label}: missing")
         return None
     try:
         return yaml.safe_load(path.read_text())
     except yaml.YAMLError as e:
-        errors.append(f"{path.name}: not valid YAML: {str(e).splitlines()[0]}")
+        errors.append(f"{label}: not valid YAML: {str(e).splitlines()[0]}")
         return None
+
+
+def _in(folder, errors):
+    """Errors of one retro, named by its folder."""
+    return [f"{folder.name}: {e}" for e in errors]
+
+
+def _fail(errors):
+    """Print the errors; true when there were any."""
+    for e in errors:
+        print(e, file=sys.stderr)
+    return bool(errors)
 
 
 def _twice(ids):
@@ -418,6 +431,8 @@ def load_config(path):
         else:
             _field(cfg, "retros", _is_text, "must be a path", errors)
             _field(cfg, "projects", lambda v: _is_text_list(v) and v, "must be a list of paths", errors)
+            if _is_text(cfg.get("retros")) and not Path(cfg["retros"]).expanduser().is_dir():
+                errors.append(f"retros: {Path(cfg['retros']).expanduser()} is not a folder")
     if errors:
         return None, [f"{path}: {e.removeprefix(path.name + ': ')}; see config.example.yaml" for e in errors]
     return {"retros": Path(cfg["retros"]).expanduser(),
@@ -429,7 +444,7 @@ def read_retros(cfg):
     retros, errors = [], []
     for folder in sorted(p.parent for p in cfg["retros"].glob("*/retro.yaml")):
         retro, _, problems = read_retro(folder)
-        errors += [f"{folder.name}: {e}" for e in problems]
+        errors += _in(folder, problems)
         retros.append((folder, retro))
     return retros, errors
 
@@ -453,27 +468,30 @@ def pending_logs(cfg, retros):
 
 def finding_statuses(folder, findings):
     """Each finding's status, read from the retro's roadmap.yaml and the feature.yaml files under features/:
-    wontfix, open (no feature), fixed (its feature is done) or planned."""
+    wontfix, open (no feature), fixed (its feature is done) or planned. No statuses when a file is broken."""
     errors = []
-    roadmap = _load(folder / "roadmap.yaml", errors) if (folder / "roadmap.yaml").is_file() else {}
-    listed = {f.get("id") for m in (roadmap or {}).get("milestones") or [] for f in m.get("features") or []}
+    roadmap = _load(folder / "roadmap.yaml", errors) if (folder / "roadmap.yaml").is_file() else {"milestones": []}
+    if not errors and not (isinstance(roadmap, dict) and isinstance(roadmap.get("milestones"), list)):
+        errors.append("roadmap.yaml: must be a mapping with milestones")
     done = set()
-    for path in folder.glob("features/*/feature.yaml"):
-        feature = yaml.safe_load(path.read_text())
+    for path in sorted(folder.glob("features/*/feature.yaml")):
+        feature = _load(path, errors, str(path.relative_to(folder)))
         if isinstance(feature, dict) and feature.get("status") == "done":
             done.add(feature.get("roadmap"))
+    if errors:
+        return [], errors
+    listed = {f.get("id") for m in roadmap["milestones"] if isinstance(m, dict)
+              for f in m.get("features") or [] if isinstance(f, dict)}
     statuses = []
     for f in findings:
         if "wontfix" in f:
             statuses.append("wontfix")
         elif "feature" not in f:
             statuses.append("open")
-        elif f["feature"] in done:
-            statuses.append("fixed")
         else:
-            statuses.append("planned")
             if f["feature"] not in listed:
                 errors.append(f"findings[{f['id']}]: {f['feature']} is not in roadmap.yaml")
+            statuses.append("fixed" if f["feature"] in done else "planned")
     return statuses, errors
 
 
@@ -482,7 +500,7 @@ def check(retros, show_all):
     lines, errors, count = [], [], Counter()
     for folder, retro in retros:
         statuses, problems = finding_statuses(folder, retro["findings"])
-        errors += [f"{folder.name}: {e}" for e in problems]
+        errors += _in(folder, problems)
         for f, status in zip(retro["findings"], statuses):
             count[status] += 1
             if show_all or status in ("open", "planned"):
@@ -517,35 +535,27 @@ def main(argv=None):
         return 0
     if args.cmd in ("pending", "check"):
         cfg, errors = load_config(args.config)
-        retros, more = read_retros(cfg) if cfg else ([], [])
-        for e in errors + more:
-            print(e, file=sys.stderr)
-        if errors or more:
+        retros, retro_problems = read_retros(cfg) if cfg else ([], [])
+        if _fail(errors + retro_problems):
             return 1
         if args.cmd == "pending":
             lines = [str(log) for log in pending_logs(cfg, retros)]
         else:
             lines, errors = check(retros, args.all)
-            for e in errors:
-                print(e, file=sys.stderr)
-            if errors:
+            if _fail(errors):
                 return 1
         for line in lines:
             print(line)
         return 0
     retro, digests, errors = read_retro(args.folder)
-    for e in errors:
-        print(e, file=sys.stderr)
-    if errors:
+    if _fail(errors):
         return 1
     if args.cmd == "validate":
         print(f"{args.folder} OK")
         return 0
     folder = Path(args.folder)
     statuses, errors = finding_statuses(folder, retro["findings"])
-    for e in errors:
-        print(e, file=sys.stderr)
-    if errors:
+    if _fail(errors):
         return 1
     (folder / "retro.md").write_text(report(retro, digests, statuses))
     print(f"wrote {folder / 'retro.md'}")

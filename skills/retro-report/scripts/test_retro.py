@@ -482,3 +482,29 @@ def test_render_refuses_feature_not_in_roadmap(tmp_path, capsys):
     folder = retro_folder(tmp_path)                         # its finding names F1.1, and it has no roadmap
     assert run(capsys, "render", str(folder)) == (1, "", "findings[1]: F1.1 is not in roadmap.yaml\n")
     assert not (folder / "retro.md").exists()
+
+
+def test_feature_done_but_not_in_roadmap(tmp_path, capsys):
+    folder = planned_retro(tmp_path, [finding(1, feature="F9.9")])
+    (folder / "features" / "F9.9-x").mkdir()
+    (folder / "features" / "F9.9-x" / "feature.yaml").write_text("roadmap: F9.9\nstatus: done\n")
+    assert run(capsys, "--config", str(tmp_path / "config.yaml"), "check")[2] == (
+        "2026-11-14-checkers: findings[1]: F9.9 is not in roadmap.yaml\n")
+
+
+def test_broken_roadmap_files_are_errors(tmp_path, capsys):
+    folder = planned_retro(tmp_path, FIVE)
+    (folder / "features" / "F1.2-x" / "feature.yaml").write_text("roadmap: [\n")
+    code, out, err = run(capsys, "--config", str(tmp_path / "config.yaml"), "check")
+    assert code == 1 and err.startswith("2026-11-14-checkers: features/F1.2-x/feature.yaml: not valid YAML")
+
+    (folder / "features" / "F1.2-x" / "feature.yaml").write_text("roadmap: F1.2\n")
+    (folder / "roadmap.yaml").write_text("- F1.1\n")
+    assert run(capsys, "--config", str(tmp_path / "config.yaml"), "check") == (
+        1, "", "2026-11-14-checkers: roadmap.yaml: must be a mapping with milestones\n")
+
+
+def test_config_retros_must_exist(tmp_path, capsys):
+    path = config(tmp_path, retros=str(tmp_path / "typo"))
+    assert run(capsys, "--config", str(path), "pending") == (
+        1, "", f"{path}: retros: {tmp_path / 'typo'} is not a folder; see config.example.yaml\n")
