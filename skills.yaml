@@ -1,6 +1,7 @@
 # skills.yaml - each own skill and the skills it was built from; checked by scripts/skills.py validate.
 # own[].test runs from skills/<name>/ in the pre-commit hook.
 # A reference is internal (skill: <own name>) or external (repo, path, commit: <sha>|unknown, license).
+# installed[]: third-party skills, each with repo, path and the upstream commit it was updated to, or origin: unknown.
 # relation: fork | derived | inspired. took: what was taken, in one line.
 
 own:
@@ -66,4 +67,212 @@ own:
     test: ""
     references: []
 
-installed: []
+installed:
+  - name: agent-reach
+    repo: https://github.com/Panniantong/Agent-Reach
+    path: "agent_reach/skill"
+    commit: c70ae6da5d39
+  - name: ask-matt
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/ask-matt"
+    commit: 5863806dd4e1
+  - name: chief-of-staff
+    repo: https://github.com/mattpocock/skills
+    path: "skills/in-progress/chief-of-staff"
+    commit: 5863806dd4e1
+  - name: claude-handoff
+    repo: https://github.com/mattpocock/skills
+    path: "skills/in-progress/claude-handoff"
+    commit: 5863806dd4e1
+  - name: code-review
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/code-review"
+    commit: 5863806dd4e1
+  - name: codebase-design
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/codebase-design"
+    commit: 5863806dd4e1
+  - name: codebase-onboarding
+    repo: https://github.com/affaan-m/everything-claude-code
+    path: "skills/codebase-onboarding"
+    commit: d2ef2680594f
+  - name: diagnosing-bugs
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/diagnosing-bugs"
+    commit: 5863806dd4e1
+  - name: domain-modeling
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/domain-modeling"
+    commit: 5863806dd4e1
+  - name: feature-roadmap
+    origin: unknown
+  - name: find-skills
+    repo: https://github.com/vercel-labs/skills
+    path: "skills/find-skills"
+    commit: b716f9dc2ba3
+  - name: frontend-design
+    repo: https://github.com/anthropics/skills
+    path: "skills/frontend-design"
+    commit: 1780c5e5a552
+  - name: git-guardrails-claude-code
+    repo: https://github.com/mattpocock/skills
+    path: "skills/misc/git-guardrails-claude-code"
+    commit: 5863806dd4e1
+  - name: grill-me
+    repo: https://github.com/mattpocock/skills
+    path: "skills/productivity/grill-me"
+    commit: 5863806dd4e1
+  - name: grill-with-docs
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/grill-with-docs"
+    commit: 5863806dd4e1
+  - name: grilling
+    repo: https://github.com/mattpocock/skills
+    path: "skills/productivity/grilling"
+    commit: 5863806dd4e1
+  - name: hallmark
+    repo: https://github.com/nutlope/hallmark
+    path: "skills/hallmark"
+    commit: 04977e15f3df
+  - name: handoff
+    repo: https://github.com/mattpocock/skills
+    path: "skills/productivity/handoff"
+    commit: 5863806dd4e1
+  - name: huashu-design
+    repo: https://github.com/alchaincyf/huashu-design
+    path: "."
+    commit: e8d1148a80d5
+  - name: implement
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/implement"
+    commit: 5863806dd4e1
+  - name: implement-spec
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/implement-spec"
+    commit: 5863806dd4e1
+  - name: improve-codebase-architecture
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/improve-codebase-architecture"
+    commit: 5863806dd4e1
+  - name: loop-me
+    repo: https://github.com/mattpocock/skills
+    path: "skills/in-progress/loop-me"
+    commit: 5863806dd4e1
+  - name: manage-skills
+    repo: https://github.com/xingkongliang/skills-manager
+    path: "skills/manage-skills"
+    commit: f374817aeb0a
+  - name: migrate-to-shoehorn
+    repo: https://github.com/mattpocock/skills
+    path: "skills/misc/migrate-to-shoehorn"
+    commit: 5863806dd4e1
+  - name: pdf-extraction
+    repo: https://github.com/claude-office-skills/skills
+    path: "pdf-extraction"
+    commit: 9c4c7d5cd281
+  - name: pr
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/pr"
+    commit: 5863806dd4e1
+  - name: prototype
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/prototype"
+    commit: 5863806dd4e1
+  - name: qa
+    origin: unknown
+  - name: record-adr
+    origin: unknown
+  - name: research
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/research"
+    commit: 5863806dd4e1
+  - name: retro
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/retro"
+    commit: 5863806dd4e1
+  - name: scaffold-exercises
+    repo: https://github.com/mattpocock/skills
+    path: "skills/misc/scaffold-exercises"
+    commit: 5863806dd4e1
+  - name: setup-matt-pocock-skills
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/setup-matt-pocock-skills"
+    commit: 5863806dd4e1
+  - name: setup-pre-commit
+    repo: https://github.com/mattpocock/skills
+    path: "skills/misc/setup-pre-commit"
+    commit: 5863806dd4e1
+  - name: setup-ts-deep-modules
+    repo: https://github.com/mattpocock/skills
+    path: "skills/in-progress/setup-ts-deep-modules"
+    commit: 5863806dd4e1
+  - name: shadcn
+    repo: https://github.com/shadcn/ui
+    path: "skills/shadcn"
+    commit: e62c9435fff7
+  - name: show-me
+    repo: https://github.com/humanlayer/skills
+    path: "plugins/show-me/skills/show-me"
+    commit: 4d69d20f6e9b
+  - name: skill-creator
+    repo: https://github.com/anthropics/skills
+    path: "skills/skill-creator"
+    commit: 1780c5e5a552
+  - name: tdd
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/tdd"
+    commit: 5863806dd4e1
+  - name: teach
+    repo: https://github.com/mattpocock/skills
+    path: "skills/productivity/teach"
+    commit: 5863806dd4e1
+  - name: to-questionnaire
+    repo: https://github.com/mattpocock/skills
+    path: "skills/productivity/to-questionnaire"
+    commit: 5863806dd4e1
+  - name: to-spec
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/to-spec"
+    commit: 5863806dd4e1
+  - name: to-tickets
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/to-tickets"
+    commit: 5863806dd4e1
+  - name: triage
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/triage"
+    commit: 5863806dd4e1
+  - name: ui-design
+    origin: unknown
+  - name: wait-what
+    repo: https://github.com/mattpocock/skills
+    path: "skills/productivity/wait-what"
+    commit: 5863806dd4e1
+  - name: wayfinder
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/wayfinder"
+    commit: 5863806dd4e1
+  - name: web-design-guidelines
+    repo: https://github.com/vercel-labs/agent-skills
+    path: "skills/web-design-guidelines"
+    commit: 1a2c79d4e6c4
+  - name: wizard
+    repo: https://github.com/mattpocock/skills
+    path: "skills/engineering/wizard"
+    commit: 5863806dd4e1
+  - name: writing-beats
+    repo: https://github.com/mattpocock/skills
+    path: "skills/in-progress/writing-beats"
+    commit: 5863806dd4e1
+  - name: writing-for-agents
+    repo: https://github.com/mattpocock/skills
+    path: "skills/productivity/writing-for-agents"
+    commit: 5863806dd4e1
+  - name: writing-fragments
+    repo: https://github.com/mattpocock/skills
+    path: "skills/in-progress/writing-fragments"
+    commit: 5863806dd4e1
+  - name: writing-shape
+    repo: https://github.com/mattpocock/skills
+    path: "skills/in-progress/writing-shape"
+    commit: 5863806dd4e1
