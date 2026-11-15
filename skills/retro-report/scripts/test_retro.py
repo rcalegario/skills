@@ -160,7 +160,7 @@ def test_tokens_once_per_message_and_cost(tmp_path, capsys):
     assert d["cost_usd"] is None
 
     log.records.append({"type": "cost-state", "totalCostUSD": 1.2647382999999996})
-    assert digest(tmp_path, log, capsys)["cost_usd"] == 1.2647
+    assert digest(tmp_path, log, capsys)["cost_usd"] == 1.2647382999999996
 
 
 def test_subagents_apart(tmp_path, capsys):
@@ -172,3 +172,39 @@ def test_subagents_apart(tmp_path, capsys):
     assert d["calls"] == {"total": 1, "by_tool": {"Agent": 1}}
     assert d["subagents"] == [{"id": "a1", "description": "Standards review", "calls": 2,
                                "tokens": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4}}]
+
+
+def test_loop_bodies_and_writes_are_not_searches(tmp_path, capsys):
+    log = (Log().prompt()
+           .bash("for f in *; do rm $f; done; ls")
+           .bash("if x; then git push; fi; cat a")
+           .bash("sed -i '' s/a/b/ f")
+           .bash("cat > f <<EOF")
+           .bash("find . -name '*.tmp' -delete")
+           .bash("grep a b").bash("ls").bash("for d in */; do grep -c x $d/a; done"))
+    assert digest(tmp_path, log, capsys)["search_streaks"] == [{"calls": [6, 7, 8], "commands": [
+        "grep a b", "ls", "for d in */; do grep -c x $d/a; done"]}]
+
+
+def test_http_not_found_is_not_command_missing(tmp_path, capsys):
+    log = (Log().prompt()
+           .bash("curl x", result="HTTP/1.1 404: Not Found")
+           .bash("sh -c foo", result="sh: 1: foo: not found"))
+    assert digest(tmp_path, log, capsys)["failures"] == {
+        "command_missing": [{"call": 2, "tool": "Bash", "line": "sh: 1: foo: not found"}]}
+
+
+def test_last_usage_of_a_message_wins(tmp_path, capsys):
+    log = (Log().prompt()
+           .bash("ls", msg_id="m1", usage=usage(1, 5, 0, 0))
+           .bash("pwd", msg_id="m1", usage=usage(1, 40, 0, 0)))
+    assert digest(tmp_path, log, capsys)["tokens"]["output"] == 40
+
+
+def test_subagent_without_meta_and_parent_tokens_apart(tmp_path, capsys):
+    sub_dir = tmp_path / SID / "subagents"
+    sub_dir.mkdir(parents=True)
+    Log().prompt().bash("ls", usage=usage(7, 7, 7, 7)).write(sub_dir / "agent-b2.jsonl")
+    d = digest(tmp_path, Log().prompt().call("Agent", {"prompt": "x"}, usage=usage(1, 1, 1, 1)), capsys)
+    assert d["subagents"][0]["description"] is None
+    assert d["tokens"] == {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}

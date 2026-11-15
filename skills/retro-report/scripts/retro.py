@@ -10,12 +10,14 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-import yaml
-
+try:
+    import yaml
+except ImportError:
+    sys.exit("retro.py needs PyYAML: pip install pyyaml")
 
 # Error classes read off a result's text, after tokeneconomizer's observe.py; first match wins.
 ERROR_PATTERNS = [
-    ("command_missing", re.compile(r"command not found|: not found\b|is not recognized", re.I)),
+    ("command_missing", re.compile(r"command not found|: not found$|is not recognized as")),
     ("module_missing", re.compile(r"ModuleNotFoundError|No module named|Cannot find module", re.I)),
     ("file_missing", re.compile(r"No such file or directory|File does not exist|ENOENT", re.I)),
     ("permission_denied", re.compile(r"Permission denied|EACCES|Operation not permitted", re.I)),
@@ -23,11 +25,21 @@ ERROR_PATTERNS = [
 LINE_MAX = 200
 INPUT_MAX = 120
 STREAK_MIN = 3
-SEARCH_TOOLS = {"Grep": "pattern", "Glob": "pattern", "Read": "file_path"}
+# Search tools, each with the input field that names what it searched.
+SEARCH_TOOL_FIELD = {"Grep": "pattern", "Glob": "pattern", "Read": "file_path"}
 SEARCH_HEADS = {"grep", "rg", "find", "ls", "cat", "head", "tail", "sed", "wc"}
-# Words that neither search nor change anything: they keep a shell search a search.
-NEUTRAL_HEADS = {"cd", "echo", "for", "do", "done", "if", "then", "else", "fi", "sort", "uniq", "xargs", "true"}
+# Commands that neither search nor change anything: they keep a shell search a search.
+NEUTRAL_HEADS = {"cd", "echo", "sort", "uniq", "xargs", "true"}
+# Shell words followed by a command; the command is the segment's head.
+PREFIX_WORDS = {"do", "then", "else", "if"}
+# Shell words whose segment runs no command of its own.
+SKIP_WORDS = {"for", "done", "fi"}
 SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")
+# A redirect to a file; /dev/null and &N are not writes.
+WRITE_REDIRECT = re.compile(r">>?\s*(?!/dev/null\b|&)\S")
+WRITE_FLAGS = {"-i", "-delete"}
+TOKEN_FIELDS = {"input": "input_tokens", "output": "output_tokens",
+                "cache_read": "cache_read_input_tokens", "cache_write": "cache_creation_input_tokens"}
 
 
 class NotASessionLog(Exception):
@@ -78,12 +90,12 @@ def result_text(content):
     return content if isinstance(content, str) else ""
 
 
-def failures(cs):
+def failures(call_list):
     """Calls grouped by error class: a line matching a pattern, else `other` when the tool said is_error.
 
     Only shell output and results marked is_error are scanned: a Read of a file that quotes an error is no failure."""
     out = {}
-    for c in cs:
+    for c in call_list:
         if c["tool"] != "Bash" and not c["is_error"]:
             continue
         lines = c["result"].splitlines()
@@ -101,32 +113,51 @@ def call_text(c):
     """What a call asked for, in one line: the command, the searched value, or the input as JSON."""
     if c["tool"] == "Bash":
         return str(c["input"].get("command", ""))
-    key = SEARCH_TOOLS.get(c["tool"])
+    key = SEARCH_TOOL_FIELD.get(c["tool"])
     if key and key in c["input"]:
         return f"{c['tool']} {c['input'][key]}"
     return json.dumps(c["input"], sort_keys=True)
 
 
-def repeats(cs):
+def repeats(call_list):
     """Calls made more than once with identical input, in order of first use."""
-    seen = Counter((c["tool"], json.dumps(c["input"], sort_keys=True)) for c in cs)
-    shown = {(c["tool"], json.dumps(c["input"], sort_keys=True)): call_text(c) for c in cs}
-    return [{"tool": key[0], "input": shown[key][:INPUT_MAX], "count": n} for key, n in seen.items() if n > 1]
+    seen, first = Counter(), {}
+    for c in call_list:
+        key = (c["tool"], json.dumps(c["input"], sort_keys=True))
+        seen[key] += 1
+        first.setdefault(key, c)
+    return [{"tool": key[0], "input": call_text(first[key])[:INPUT_MAX], "count": n}
+            for key, n in seen.items() if n > 1]
+
+
+def shell_heads(command):
+    """The command each segment runs, past loop and if words; None for a segment that writes a file."""
+    heads = []
+    for seg in SEGMENT_SPLIT.split(command):
+        words = seg.split()
+        if WRITE_REDIRECT.search(seg) or WRITE_FLAGS & set(words):
+            heads.append(None)
+            continue
+        while words and words[0] in PREFIX_WORDS:
+            words = words[1:]
+        if words and words[0] not in SKIP_WORDS:
+            heads.append(words[0].lstrip("("))
+    return heads
 
 
 def is_search(c):
-    if c["tool"] in SEARCH_TOOLS:
+    if c["tool"] in SEARCH_TOOL_FIELD:
         return True
     if c["tool"] != "Bash":
         return False
-    heads = [seg.split()[0].lstrip("(") for seg in SEGMENT_SPLIT.split(call_text(c)) if seg.split()]
+    heads = shell_heads(call_text(c))
     return any(h in SEARCH_HEADS for h in heads) and all(h in SEARCH_HEADS | NEUTRAL_HEADS for h in heads)
 
 
-def search_streaks(cs):
+def search_streaks(call_list):
     """Runs of STREAK_MIN or more search calls in a row."""
     runs, run = [], []
-    for c in cs + [None]:
+    for c in call_list + [None]:
         if c is not None and is_search(c):
             run.append(c)
             continue
@@ -134,10 +165,6 @@ def search_streaks(cs):
             runs.append({"calls": [r["n"] for r in run], "commands": [call_text(r)[:INPUT_MAX] for r in run]})
         run = []
     return runs
-
-
-TOKEN_FIELDS = {"input": "input_tokens", "output": "output_tokens",
-                "cache_read": "cache_read_input_tokens", "cache_write": "cache_creation_input_tokens"}
 
 
 def tokens(records):
@@ -153,7 +180,7 @@ def tokens(records):
 def cost_usd(records):
     """The session's own total from its last cost-state record; None when it recorded none."""
     totals = [r["totalCostUSD"] for r in records if r.get("type") == "cost-state" and "totalCostUSD" in r]
-    return round(float(totals[-1]), 4) if totals else None
+    return totals[-1] if totals else None
 
 
 def subagents(path):
@@ -187,17 +214,17 @@ def digest(path):
     session = next((r["sessionId"] for r in records if r.get("sessionId")), Path(path).stem)
     project = next((r["cwd"] for r in records if r.get("cwd")), None)
     stamps = sorted((r["timestamp"] for r in records if r.get("timestamp")), key=_time)
-    cs = calls(records)
+    call_list = calls(records)
     return {
         "session": session,
         "project": project,
         "start": _iso(stamps[0]) if stamps else None,
         "end": _iso(stamps[-1]) if stamps else None,
         "duration_s": int((_time(stamps[-1]) - _time(stamps[0])).total_seconds()) if stamps else 0,
-        "calls": {"total": len(cs), "by_tool": dict(sorted(Counter(c["tool"] for c in cs).items()))},
-        "failures": failures(cs),
-        "repeats": repeats(cs),
-        "search_streaks": search_streaks(cs),
+        "calls": {"total": len(call_list), "by_tool": dict(sorted(Counter(c["tool"] for c in call_list).items()))},
+        "failures": failures(call_list),
+        "repeats": repeats(call_list),
+        "search_streaks": search_streaks(call_list),
         "tokens": tokens(records),
         "cost_usd": cost_usd(records),
         "subagents": subagents(path),
