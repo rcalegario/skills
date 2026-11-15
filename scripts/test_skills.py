@@ -47,8 +47,14 @@ def run(root, *args):
     )
 
 
+def write_credits(root):
+    out = run(root, "credits", "--write")
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
 def test_good_manifest_passes(tmp_path):
     root = make_repo(tmp_path)
+    write_credits(root)
     out = run(root, "validate")
     assert out.returncode == 0, out.stdout + out.stderr
 
@@ -88,6 +94,7 @@ def test_bad_relation_fails(tmp_path, relation):
 def test_external_commit_rules(tmp_path, commit_line, ok):
     manifest = GOOD.replace("        commit: abc1234\n", commit_line)
     root = make_repo(tmp_path, manifest=manifest)
+    write_credits(root)
     out = run(root, "validate")
     assert (out.returncode == 0) == ok, out.stdout
     if not ok:
@@ -135,6 +142,7 @@ def hooked_repo(tmp_path, alpha_test):
     (root / ".githooks").mkdir()
     (root / ".githooks" / "pre-commit").write_text(open(HOOK).read())
     os.chmod(root / ".githooks" / "pre-commit", 0o755)
+    write_credits(root)
     git(root, "init", "-q")
     git(root, "config", "core.hooksPath", ".githooks")
     git(root, "add", ".")
@@ -168,3 +176,40 @@ def test_hook_blocks_an_invalid_manifest(tmp_path):
     out = git(root, "commit", "-q", "-m", "add delta")
     assert out.returncode != 0
     assert "delta" in out.stderr
+
+
+def test_credits_write_lists_references(tmp_path):
+    root = make_repo(tmp_path)
+    write_credits(root)
+    readme = (root / "README.md").read_text()
+    section = readme.split("<!-- credits:start -->")[1].split("<!-- credits:end -->")[0]
+    assert "### alpha" in section and "### beta" in section
+    assert "derived from [beta](skills/beta)" in section
+    assert "inspired by [acme/skills · gamma](https://github.com/acme/skills/tree/abc1234/skills/gamma)" in section
+    assert "MIT" in section and "`abc1234`" in section
+    assert readme.startswith("# repo\n")
+
+
+def test_unknown_commit_links_to_the_default_branch(tmp_path):
+    root = make_repo(tmp_path, manifest=GOOD.replace("commit: abc1234", "commit: unknown"))
+    write_credits(root)
+    section = (root / "README.md").read_text()
+    assert "https://github.com/acme/skills/tree/HEAD/skills/gamma" in section
+    assert "commit unknown" in section
+
+
+def test_stale_credits_fail_validate(tmp_path):
+    root = make_repo(tmp_path)
+    write_credits(root)
+    readme = root / "README.md"
+    readme.write_text(readme.read_text().replace("Visuals", "Pictures"))
+    out = run(root, "validate")
+    assert out.returncode == 1
+    assert "credits --write" in out.stdout
+
+
+def test_missing_credits_markers_fail_validate(tmp_path):
+    root = make_repo(tmp_path, readme="# repo\n")
+    out = run(root, "validate")
+    assert out.returncode == 1
+    assert "credits" in out.stdout

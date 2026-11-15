@@ -1,6 +1,6 @@
 """Checks skills.yaml, the record of each own skill and the skills it was built from.
 
-Usage: python scripts/skills.py [--root DIR] validate | test-cmd <skill>
+Usage: python scripts/skills.py [--root DIR] validate | credits [--write] | test-cmd <skill>
 """
 import argparse
 import re
@@ -10,6 +10,8 @@ from pathlib import Path
 import yaml
 
 RELATIONS = ("fork", "derived", "inspired")
+WORDING = {"fork": "fork of", "derived": "derived from", "inspired": "inspired by"}
+START, END = "<!-- credits:start -->", "<!-- credits:end -->"
 SHA = re.compile(r"^[0-9a-f]{7,40}$")
 
 
@@ -38,6 +40,52 @@ def reference_errors(skill, i, ref, own_names):
     return errors
 
 
+def reference_line(ref):
+    took = f" - {ref['took']}" if ref.get("took") else ""
+    relation = WORDING.get(ref.get("relation"), ref.get("relation"))
+    if "skill" in ref:
+        return f"- {relation} [{ref['skill']}](skills/{ref['skill']}){took}"
+    repo = ref["repo"].rstrip("/")
+    commit = str(ref.get("commit", "unknown"))
+    path = ref.get("path", "")
+    name = "/".join(repo.split("/")[-2:])
+    if path:
+        name += " · " + path.rstrip("/").split("/")[-1]
+    ref_name = "HEAD" if commit == "unknown" else commit
+    url = f"{repo}/tree/{ref_name}/{path}".rstrip("/").replace("(", "%28").replace(")", "%29")
+    meta = [ref["license"]] if ref.get("license") else []
+    meta.append("commit unknown" if commit == "unknown" else f"`{commit}`")
+    return f"- {relation} [{name}]({url}) ({', '.join(meta)}){took}"
+
+
+def credits(manifest):
+    lines = [START, "<!-- Generated from skills.yaml by `python scripts/skills.py credits --write`. -->", ""]
+    for entry in own_entries(manifest):
+        lines += [f"### {entry.get('name')}", ""]
+        refs = entry.get("references") or []
+        lines += [reference_line(r) for r in refs] or ["- No outside references."]
+        lines.append("")
+    lines.append(END)
+    return "\n".join(lines)
+
+
+def replace_credits(readme, section):
+    if START not in readme or END not in readme:
+        return None
+    head, rest = readme.split(START, 1)
+    return head + section + rest.split(END, 1)[1]
+
+
+def credits_errors(root, manifest):
+    readme = (root / "README.md").read_text() if (root / "README.md").exists() else ""
+    expected = replace_credits(readme, credits(manifest))
+    if expected is None:
+        return [f"README.md: no {START} / {END} markers for the credits"]
+    if expected != readme:
+        return ["README.md: credits differ from skills.yaml; run `python scripts/skills.py credits --write`"]
+    return []
+
+
 def validate(root):
     manifest = load(root)
     entries = own_entries(manifest)
@@ -51,6 +99,8 @@ def validate(root):
     for entry in entries:
         for i, ref in enumerate(entry.get("references") or []):
             errors.extend(reference_errors(entry.get("name"), i, ref, own_names))
+    if not errors:
+        errors.extend(credits_errors(root, manifest))
     return errors
 
 
@@ -59,6 +109,8 @@ def main(argv=None):
     parser.add_argument("--root", default=Path(__file__).resolve().parent.parent, type=Path)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("validate")
+    credits_cmd = sub.add_parser("credits")
+    credits_cmd.add_argument("--write", action="store_true")
     test_cmd = sub.add_parser("test-cmd")
     test_cmd.add_argument("skill")
     args = parser.parse_args(argv)
@@ -70,6 +122,18 @@ def main(argv=None):
         if errors:
             return 1
         print("skills.yaml OK")
+        return 0
+    if args.cmd == "credits":
+        section = credits(load(args.root))
+        if not args.write:
+            print(section)
+            return 0
+        readme_path = args.root / "README.md"
+        updated = replace_credits(readme_path.read_text(), section)
+        if updated is None:
+            print(f"README.md: add {START} and {END} where the credits go", file=sys.stderr)
+            return 1
+        readme_path.write_text(updated)
         return 0
     if args.cmd == "test-cmd":
         for entry in own_entries(load(args.root)):

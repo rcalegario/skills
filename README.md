@@ -15,3 +15,37 @@ Agent skills I wrote or forked, for Claude Code and other agents that read `SKIL
 ```sh
 npx skills add rcalegario/skills
 ```
+
+## Credits
+
+What each skill is built from. Edit `skills.yaml`, then run `python scripts/skills.py credits --write`.
+
+<!-- credits:start -->
+<!-- Generated from skills.yaml by `python scripts/skills.py credits --write`. -->
+
+### flow
+
+- derived from [tlc-spec-driven](skills/tlc-spec-driven) - Criteria proved by checks, with every gate enforced by a tested script
+- derived from [spec-lite](skills/spec-lite) - YAML state for roadmap and features, changed only through the script
+- inspired by [humanlayer/skills · show-me](https://github.com/humanlayer/skills/tree/HEAD/plugins/show-me/skills/show-me) (MIT, commit unknown) - Shapes, flows and changes shown as visuals in the docs people read
+
+### task
+
+- inspired by [mattpocock/skills · grilling](https://github.com/mattpocock/skills/tree/HEAD/skills/productivity/grilling) (commit unknown) - Decisions asked in rounds over a design tree, each with a recommended answer
+- inspired by [mattpocock/skills · to-spec](https://github.com/mattpocock/skills/tree/HEAD/skills/engineering/to-spec) (commit unknown) - Turning a base text into outcomes and requirements before any code
+- inspired by [mattpocock/skills · to-tickets](https://github.com/mattpocock/skills/tree/HEAD/skills/engineering/to-tickets) (commit unknown) - Splitting the work into slices that each ship on their own
+
+### spec-lite
+
+- derived from [tlc-spec-driven](skills/tlc-spec-driven) - Spec, tasks, execute and validate per feature, made lighter for personal projects
+
+### tlc-spec-driven
+
+- fork of [tech-leads-club/agent-skills · tlc-spec-driven](https://github.com/tech-leads-club/agent-skills/tree/8658b66/packages/skills-catalog/skills/%28development%29/tlc-spec-driven) (CC-BY-4.0, `8658b66`) - The whole skill at upstream 4.1.0; local changes are listed in its MODS.md
+- inspired by [humanlayer/skills · show-me](https://github.com/humanlayer/skills/tree/HEAD/plugins/show-me/skills/show-me) (MIT, commit unknown) - A copy of show-me in references/show-me.md, credited in its header
+
+### idea-triage
+
+- No outside references.
+
+<!-- credits:end -->
