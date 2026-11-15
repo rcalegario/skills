@@ -461,12 +461,26 @@ class Task:
         return "\n\n".join(out)
 
 
+def find(task, ident):
+    """Print each place ident is defined: a YAML `id:` line or a Markdown heading."""
+    defined = re.compile(r"""^\s*(?:-\s+)?id:\s*["']?%s["']?\s*$|^#+\s+%s(?![\w.-])""" % (re.escape(ident), re.escape(ident)))
+    hits = []
+    for path in sorted(task.text_files()):
+        with open(path, encoding="utf-8") as fh:
+            for n, line in enumerate(fh, 1):
+                if defined.match(line):
+                    hits.append("%s:%d" % (os.path.relpath(path, task.root).replace("\\", "/"), n))
+    print("\n".join(hits) if hits else "%s is not defined in %s" % (ident, task.root))
+    return 0 if hits else 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("task", nargs="?", default=".")
     ap.add_argument("--gate", choices=("plan", "spec", "pr"))
     ap.add_argument("--feature", help="with --gate spec: the feature id (e.g. F1.1)")
     ap.add_argument("--pr-notes", action="store_true")
+    ap.add_argument("--find", metavar="ID", help="print <file>:<line> where ID is defined, and skip the checks")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -474,6 +488,8 @@ def main(argv=None):
         print("ERROR: %s has no acs.yaml; not a task folder" % os.path.abspath(args.task))
         return 2
     task = Task(args.task)
+    if args.find:
+        return find(task, args.find)
     task.check()
     if args.pr_notes:
         print(task.pr_notes())

@@ -294,3 +294,20 @@ def test_gate_spec_reads_story_decisions_and_unknown_feature(task, capsys):
 def test_note_ids_are_not_task_ids(task):
     write(task, "context/now.md", "---\ncode: NOW\n---\n\n## NOW-1 Build\n\nStep N-1 of the vendor guide.\n")
     assert run(task) == 0
+
+
+def test_find_prints_where_an_id_is_defined(task, capsys):
+    write(task, "context/now.md", "---\ncode: NOW\n---\n\n## NOW-1 Firewall\n\n### NOW-1.2 Docker\n")
+    assert run(task, "--find", "NOW-1.2") == 0
+    assert capsys.readouterr().out.strip() == "context/now.md:7"
+    assert run(task, "--find", "NOW-1") == 0
+    assert capsys.readouterr().out.strip() == "context/now.md:5"
+    assert run(task, "--find", "D-01") == 0
+    assert capsys.readouterr().out.strip() == "decisions/D-01-source.yaml:1"
+    assert run(task, "--find", "AC-1.1") == 0
+    assert capsys.readouterr().out.strip() == "acs.yaml:4"
+
+
+def test_find_unknown_id_fails(task, capsys):
+    assert run(task, "--find", "D-99") == 1
+    assert "D-99 is not defined" in capsys.readouterr().out
