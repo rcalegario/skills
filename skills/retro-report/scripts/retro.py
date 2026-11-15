@@ -3,10 +3,11 @@
   retro.py digest <session.jsonl>...   each session's calls, failures, repeats and cost, as a YAML list
   retro.py render <retro-folder>       write its retro.md from the two yaml files
   retro.py pending                     the session logs no retro has read
+  retro.py due                         their count, once it reaches the threshold; nothing below it
   retro.py check [--all] [folder]      the findings still to fix, of every retro or of that folder only
   retro.py validate <retro-folder>     check its retro.yaml, and that sessions.yaml digests each session it names
 
-pending, and check without a folder, read config.yaml beside this skill's SKILL.md (see config.example.yaml), or --config.
+pending, due, and check without a folder, read config.yaml beside this skill's SKILL.md (see config.example.yaml), or --config.
 """
 import argparse
 import json
@@ -422,7 +423,7 @@ def report(retro, digests, statuses):
 
 
 def load_config(path):
-    """retros and projects from config.yaml, ~ expanded, with one line per problem."""
+    """retros, projects and threshold (default 10) from config.yaml, ~ expanded, with one line per problem."""
     errors = []
     cfg = _load(path, errors)
     if not errors:
@@ -431,12 +432,15 @@ def load_config(path):
         else:
             _field(cfg, "retros", _is_text, "must be a path", errors)
             _field(cfg, "projects", lambda v: _is_text_list(v) and v, "must be a list of paths", errors)
+            _field(cfg, "threshold", lambda v: type(v) is int and v > 0, "must be a positive whole number", errors,
+                   required=False)
             if _is_text(cfg.get("retros")) and not Path(cfg["retros"]).expanduser().is_dir():
                 errors.append(f"retros: {Path(cfg['retros']).expanduser()} is not a folder")
     if errors:
         return None, [f"{path}: {e.removeprefix(path.name + ': ')}; see config.example.yaml" for e in errors]
     return {"retros": Path(cfg["retros"]).expanduser(),
-            "projects": [Path(p).expanduser() for p in cfg["projects"]]}, []
+            "projects": [Path(p).expanduser() for p in cfg["projects"]],
+            "threshold": cfg.get("threshold", 10)}, []
 
 
 def read_retros(cfg):
@@ -521,6 +525,7 @@ def main(argv=None):
     r = sub.add_parser("render", help="write a valid retro folder's retro.md")
     r.add_argument("folder")
     sub.add_parser("pending", help="list the session logs no retro has read, oldest first")
+    sub.add_parser("due", help="print how many sessions are pending once they reach the threshold, else nothing")
     c = sub.add_parser("check", help="list the findings still to fix, of every retro or of one folder")
     c.add_argument("folder", nargs="?", help="check this retro folder only (no config needed)")
     c.add_argument("--all", action="store_true", help="also list the fixed and wontfix findings")
@@ -534,7 +539,7 @@ def main(argv=None):
             return 1
         print(yaml.safe_dump(result, sort_keys=False, allow_unicode=True, width=200), end="")
         return 0
-    if args.cmd in ("pending", "check"):
+    if args.cmd in ("pending", "due", "check"):
         if args.cmd == "check" and args.folder:
             retro, _, errors = read_retro(args.folder)
             retros = [(Path(args.folder), retro)]
@@ -546,6 +551,9 @@ def main(argv=None):
             return 1
         if args.cmd == "pending":
             lines = [str(log) for log in pending_logs(cfg, retros)]
+        elif args.cmd == "due":
+            count = len(pending_logs(cfg, retros))
+            lines = [str(count)] if count >= cfg["threshold"] else []
         else:
             lines, errors = check(retros, args.all)
             if _fail(errors):

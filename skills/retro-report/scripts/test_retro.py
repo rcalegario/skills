@@ -528,3 +528,27 @@ def test_config_retros_must_exist(tmp_path, capsys):
     path = config(tmp_path, retros=str(tmp_path / "typo"))
     assert run(capsys, "--config", str(path), "pending") == (
         1, "", f"{path}: retros: {tmp_path / 'typo'} is not a folder; see config.example.yaml\n")
+
+
+def due(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    return run(capsys, "--config", str(tmp_path / "config.yaml"), "due")
+
+
+def test_due_at_threshold(tmp_path, capsys, monkeypatch):
+    config(tmp_path, threshold=2)
+    session_log(tmp_path / "home", "-work-repo", "s-1", 100)
+    assert due(tmp_path, capsys, monkeypatch) == (0, "", "")
+    session_log(tmp_path / "home", "-work-repo", "s-2", 200)
+    assert due(tmp_path, capsys, monkeypatch) == (0, "2\n", "")
+
+
+def test_due_threshold_default_and_wrong(tmp_path, capsys, monkeypatch):
+    config(tmp_path, threshold=None)
+    for n in range(10):
+        session_log(tmp_path / "home", "-work-repo", f"s-{n}", 100 + n)
+    assert due(tmp_path, capsys, monkeypatch) == (0, "10\n", "")
+    path = config(tmp_path, threshold=0)
+    assert due(tmp_path, capsys, monkeypatch) == (
+        1, "", f"{path}: threshold: must be a positive whole number; see config.example.yaml\n")
