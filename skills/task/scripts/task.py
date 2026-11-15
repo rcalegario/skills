@@ -11,6 +11,11 @@ Usage:
     python task.py [task-dir] validate V-nn --status passed|failed|dropped [--evidence TEXT] [--attach FILE]
     python task.py [task-dir] close P-n [--status done|dropped] [--link URL]
     python task.py [task-dir] consolidate
+    python task.py [task-dir] sync
+
+`sync` writes the status of every requirement and item (acs.yaml) and of every roadmap feature and milestone
+(.specs/roadmap.yaml) from the rest of the folder; every other command does it after its own edit. These
+statuses are never typed by hand.
 
 Each command edits only the lines it owns (comments and order stay), then runs the status.py checks and
 exits 1 when the folder has failures. The folder layout is in ../reference/format.md.
@@ -211,6 +216,9 @@ def cmd_new_validation(root, a):
 def cmd_decide(root, a):
     path = find_file(root, "decisions", a.id)
     state = "proposed" if a.proposed else "decided"
+    current = doc(path).get("status")
+    if current in ("decided", "superseded", "dropped"):
+        raise Refusal("%s is %s; to change course write a new decision and `supersede` it" % (a.id, current))
     if state == "decided" and not a.why:
         raise Refusal("a decided decision needs --why (use --proposed to recommend without deciding)")
 
@@ -244,6 +252,8 @@ def cmd_supersede(root, a):
 
 def cmd_validate(root, a):
     path = find_file(root, "validations", a.id)
+    if doc(path).get("status") == "dropped":
+        raise Refusal("%s is dropped: what it proved left the task" % a.id)
     if a.status in ("passed", "failed") and not (a.evidence or doc(path).get("evidence", "").strip()):
         raise Refusal("%s needs --evidence: date, environment and output of the run" % a.status)
 
@@ -266,6 +276,9 @@ def cmd_close(root, a):
     if len(blocks) != 1:
         raise Refusal("%s is not defined in pending.yaml" % a.id)
     start, end, indent = blocks[0]
+    current = next(i for i in yaml.safe_load("".join(lines)) if i.get("id") == a.id).get("status")
+    if current in ("done", "dropped"):
+        raise Refusal("%s is already %s" % (a.id, current))
     flow.set_key(lines, start, end, indent, "status", a.status)
     end = flow.block_end(lines, start, indent - 2)
     flow.set_key(lines, start, end, indent, "closed", today(), after="status")
@@ -274,6 +287,36 @@ def cmd_close(root, a):
         flow.set_key(lines, start, end, indent, "link", scalar(a.link), after="closed")
     write_lines(path, lines, lambda d: any(i.get("id") == a.id and i.get("status") == a.status for i in d))
     return "%s %s" % (a.id, a.status)
+
+
+def sync_acs(root, check):
+    """Write each active requirement's and item's computed status into acs.yaml; returns the lines changed."""
+    path = os.path.join(root, "acs.yaml")
+    lines = read_lines(path)
+    before = list(lines)
+    for item in check.active_items():
+        wanted = [(item.get("id"), check.item_status(item))]
+        wanted += [(r.get("id"), check.req_status(r)) for r in status.lst(item.get("requirements"))]
+        for ident, state in wanted:
+            blocks = flow.item_blocks(lines, "id", str(ident))
+            if len(blocks) == 1:
+                start, end, indent = blocks[0]
+                flow.set_key(lines, start, end, indent, "status", state, after="text")
+    if lines != before:
+        write_lines(path, lines, lambda d: isinstance(d, list))
+    return len(lines) - len(before) + sum(1 for a, b in zip(before, lines) if a != b)
+
+
+def sync_all(root):
+    check = status.Task(root)
+    check.check()
+    changed = sync_acs(root, check)
+    flow.sync_roadmap(os.path.join(root, ".specs"))
+    return changed
+
+
+def cmd_sync(root, a):
+    return "sync: %d acs.yaml line(s) changed" % sync_all(root)
 
 
 def cmd_consolidate(root, a):
@@ -348,6 +391,7 @@ def build_parser():
     cl.add_argument("--status", default="done", choices=("done", "dropped"))
     cl.add_argument("--link")
     add("consolidate")
+    add("sync")
     return ap
 
 
@@ -359,6 +403,7 @@ def main(argv=None):
         return 2
     handler = {"journal": cmd_journal, "decide": cmd_decide, "supersede": cmd_supersede,
                "validate": cmd_validate, "close": cmd_close, "consolidate": cmd_consolidate,
+               "sync": cmd_sync,
                "new": lambda r, a: {"decision": cmd_new_decision, "validation": cmd_new_validation,
                                     "pending": cmd_new_pending}[a.kind](r, a)}[args.command]
     try:
@@ -366,6 +411,8 @@ def main(argv=None):
     except Refusal as exc:
         print("ERROR: %s" % exc)
         return 1
+    if args.command != "sync":
+        sync_all(root)
     check = status.Task(root)
     check.check()
     for failure in check.failures:

@@ -17,11 +17,15 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "flow", "scripts"))
+
 try:
     import yaml
 except ImportError:
     sys.stderr.write("status.py needs PyYAML (pip install pyyaml).\n")
     sys.exit(2)
+
+import flow  # noqa: E402  (the milestone status rule is /flow's)
 
 DECISION_STATUSES = ("open", "proposed", "decided", "superseded", "dropped")
 INACTIVE = {"superseded", "dropped"}
@@ -30,6 +34,7 @@ VALIDATION_STATUSES = ("pending", "passed", "failed", "dropped")
 SPIKE_BLOCKING = ("pending", "failed")  # a spike unblocks its decisions once passed or dropped
 PENDING_STATUSES = ("open", "done", "dropped")
 ORDER = ["discovery", "deciding", "decided", "built", "concluded"]
+ITEM_STATUSES = ORDER + ["dropped"]
 
 ID_RE = r"(?:D-\d{2}|V-\d{2}|J-\d{3}|P-\d+|(?:AC|X)-\d+(?:\.\d+)?)"
 
@@ -125,6 +130,7 @@ class Task:
         self.check_references()
         self.build_tree()
         self.check_links()
+        self.check_statuses()
         self.check_layout()
 
     def check_layout(self):
@@ -313,6 +319,53 @@ class Task:
             for d, dec in self.decisions.items():
                 if dec.get("status") == "decided" and dec.get("needs_code", True) and not self.dec_features[d]:
                     self.warnings.append("%s: decided and needs code, but no feature links it" % d)
+
+    def check_statuses(self):
+        """The status written in acs.yaml and roadmap.yaml is the one the rest of the folder implies."""
+        sync = "run `task.py sync`"
+        for item in self.items:
+            if item.get("status") is not None and item.get("status") not in ITEM_STATUSES:
+                self.fail("%s: status must be one of %s" % (item.get("id"), ", ".join(ITEM_STATUSES)))
+        for item in self.active_items():
+            rows = [(item.get("id"), item, self.item_status(item), "its requirements")]
+            rows += [(r.get("id"), r, self.req_status(r), "the decisions, features and validations")
+                     for r in lst(item.get("requirements"))]
+            for ident, entity, computed, source in rows:
+                stored = entity.get("status")
+                if stored is None:
+                    self.fail("%s: no status (%s)" % (ident, sync))
+                elif stored not in ORDER:
+                    self.fail("%s: status must be one of %s" % (ident, ", ".join(ORDER)))
+                elif stored != computed:
+                    self.fail("%s: status is %s but %s say %s (%s)" % (ident, stored, source, computed, sync))
+        self.check_roadmap_statuses(sync)
+
+    def check_roadmap_statuses(self, sync):
+        data = load_yaml(self.path(".specs", "roadmap.yaml"), {}) or {}
+        if not isinstance(data, dict):
+            return
+        linked = {}
+        for feat in self.features.values():
+            if feat.get("roadmap") is not None:
+                linked.setdefault(str(feat["roadmap"]), feat.get("status"))
+        for ms in lst(data.get("milestones")):
+            if not isinstance(ms, dict):
+                continue
+            states = []
+            for feat in lst(ms.get("features")):
+                if not isinstance(feat, dict) or feat.get("id") is None:
+                    continue
+                computed = linked.get(str(feat["id"])) or "planned"
+                states.append(computed)
+                self.compare_roadmap(feat["id"], feat.get("status"), computed, sync)
+            if states:
+                self.compare_roadmap(ms.get("id"), ms.get("status"), flow.milestone_status(states), sync)
+
+    def compare_roadmap(self, ident, stored, computed, sync):
+        if stored is None:
+            self.fail("%s: no roadmap status (%s)" % (ident, sync))
+        elif stored != computed:
+            self.fail("%s: roadmap status is %s but the features say %s (%s)" % (ident, stored, computed, sync))
 
     def repo_names(self):
         """Repo names from the README header, or None when the README has no repos list."""

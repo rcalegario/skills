@@ -7,7 +7,7 @@ A task folder records the facts, decisions, plan and proof behind one piece of w
 | Path | Format | Holds |
 |---|---|---|
 | `README.md` | md + YAML header | the base text verbatim (with its link), the problem, who it serves, what stays out. Header: `id` (the folder name), `title`, `link`, `repos:` (exactly one with `main: true`) |
-| `acs.yaml` | YAML | outcomes (`AC-n`) and extras (`X-n`), each split into requirements |
+| `acs.yaml` | YAML | outcomes (`AC-n`) and extras (`X-n`), each split into requirements, each with its derived `status` |
 | `context/*.md` | md + YAML header | facts only, each file with its `code` and the date it was read |
 | `context/archive/` | any | frozen old material, read only, never checked |
 | `decisions/D-nn-<slug>.yaml` | YAML | one question per file |
@@ -67,7 +67,27 @@ Each link is written in one place; `status.py` derives the reverse:
 
 ## Status
 
-Computed by `status.py`, never written by hand. The other YAML fields with an id, a date or a status are written by `task.py` (see the task `SKILL.md`). An item's status is the lowest of its requirements:
+Every entity with a status shows it in its own file. Nobody types a status: a script writes it, and a script that sets the status of a higher entity first checks the lower ones. Two kinds:
+
+- **Derived** (requirement, item, roadmap feature and milestone, feature task, feature): the status follows from the entities below it. It is written by `task.py sync` (which every `task.py` command runs after its own edit) or by `flow.py`; `status.py` fails when the written status differs from the computed one, and when it is missing.
+- **Recorded** (decision, validation, pending item, check): a person's act changes it, through the `task.py` or `flow.py` command that owns it, which refuses a move the machine does not allow.
+
+After a `/flow` command in a task, run `task.py <task> sync`, so the requirements follow the features.
+
+| Entity | File | Machine | Moved by |
+|---|---|---|---|
+| decision | `decisions/D-nn-*.yaml` | `open` → `proposed` → `decided`; `decided`, `proposed` → `superseded`; `dropped` | `task.py decide`, `supersede` (a decided decision is never decided again: supersede it) |
+| validation | `validations/V-nn-*.yaml` | `pending` → `passed` \| `failed` (rerun allowed) \| `dropped` (final) | `task.py validate` |
+| pending item | `pending.yaml` | `open` → `done` \| `dropped` (both final) | `task.py close` |
+| check | `feature.yaml` | `pending` → `pass` \| `fail` | `flow.py set <feature> AC<n>`, only once every task covering it has a commit |
+| feature task | `feature.yaml` | `todo` → `doing` → `verifying` → `done` | `flow.py set T<n> doing\|verifying`; `done` only when every check of the criteria it covers is `pass` (back to `verifying` when one fails) |
+| feature | `feature.yaml` | `draft` → `approved` → `building` → `review` → `done` | `flow.py approve`, `set`, `review` (tasks `verifying` or `done`), `finish` (tasks `done`, checks `pass`, review recorded) |
+| roadmap feature | `roadmap.yaml` | `planned` (no feature file yet), then the status of its feature | `flow.py`, after each command that changes a feature |
+| roadmap milestone | `roadmap.yaml` | `planned` (all features planned) → `building` → `done` (all done) | `flow.py`, same |
+| requirement | `acs.yaml` | `discovery` → `deciding` → `decided` → `built` → `concluded` (it can move back) | `task.py sync` |
+| item | `acs.yaml` | the lowest status of its requirements, or `dropped` (an `X-n` the user dropped, written by hand) | `task.py sync` |
+
+Requirement status:
 
 | Status | When |
 |---|---|

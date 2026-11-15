@@ -165,13 +165,14 @@ def test_check_rejects_finding_without_task_or_reason(repo, capsys):
 
 def test_done_status_needs_every_check_passed(repo, capsys):
     sha1 = commit(repo, "a\n")
-    assert run(repo, "set", "demo", "T1", "done") == 0
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
     commit(repo, "b\n")
-    assert run(repo, "set", "demo", "T2", "done") == 0
+    assert run(repo, "set", "demo", "T2", "verifying") == 0
     text = feature(repo).read_text().replace("status: building", "status: done") + "review:\n  findings: []\n"
     code, out = check_output(repo, capsys, text)
     assert code == 1 and "check AC1 is pending" in out
-    code, out = check_output(repo, capsys, text.replace("status: pending", "status: pass"))
+    passed = text.replace("status: pending", "status: pass").replace("status: verifying", "status: done")
+    code, out = check_output(repo, capsys, passed)
     assert code == 0, out
     assert sha1
 
@@ -238,57 +239,58 @@ def test_set_doing_moves_feature_to_building(repo):
     assert run(repo, "check", "demo") == 0
 
 
-def test_set_done_records_head_keeps_comments_and_moves_to_building(repo):
+def test_set_verifying_records_head_keeps_comments_and_moves_to_building(repo):
     sha = commit(repo, "v2\n")
-    assert run(repo, "set", "demo", "T1", "done") == 0
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
     text = feature(repo).read_text()
     d = yaml.safe_load(text)
     t1 = d["tasks"][0]
-    assert t1["status"] == "done" and str(t1["sha"]) == sha
+    assert t1["status"] == "verifying" and str(t1["sha"]) == sha
     assert t1["commit"] == "feat: do the first thing"
     assert d["status"] == "building"
     assert "status: building   # keep this comment" in text
-    assert "status: done   # task comment" in text
+    assert "status: verifying   # task comment" in text
     assert d["tasks"][1]["status"] == "todo"
     assert run(repo, "check", "demo") == 0
 
 
-def test_set_done_refuses_uncommitted_code(repo):
+def test_set_verifying_refuses_uncommitted_code(repo):
     (repo / "code.txt").write_text("dirty\n")
-    assert run(repo, "set", "demo", "T1", "done") == 1
+    assert run(repo, "set", "demo", "T1", "verifying") == 1
     assert data(repo)["tasks"][0]["status"] == "todo"
 
 
-@pytest.mark.parametrize("state", ["doing", "done"])
+@pytest.mark.parametrize("state", ["doing", "verifying"])
 def test_set_task_refuses_blocked_task(repo, state):
     commit(repo, "v2\n")
     assert run(repo, "set", "demo", "T2", state) == 1
 
 
-def test_set_done_refuses_same_commit_twice(repo):
+def test_set_verifying_refuses_same_commit_twice(repo):
     commit(repo, "v2\n")
-    assert run(repo, "set", "demo", "T1", "done") == 0
-    assert run(repo, "set", "demo", "T2", "done") == 1
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
+    assert run(repo, "set", "demo", "T2", "verifying") == 1
 
 
-@pytest.mark.parametrize("state", ["doing", "done"])
+@pytest.mark.parametrize("state", ["doing", "verifying"])
 def test_set_task_refuses_before_approval(repo, state):
     feature(repo).write_text(DRAFT_M)
     commit(repo, "v2\n")
     assert run(repo, "set", "demo", "T1", state) == 1
 
 
-def test_set_done_with_explicit_commit_for_resume(repo):
+def test_set_verifying_with_explicit_commit_for_resume(repo):
     sha = commit(repo, "v2\n")
     commit(repo, "v3\n")
-    assert run(repo, "set", "demo", "T1", "done", "--commit", sha) == 0
+    assert run(repo, "set", "demo", "T1", "verifying", "--commit", sha) == 0
     assert str(data(repo)["tasks"][0]["sha"]) == sha
 
 
 def test_set_rejects_unknown_target_or_value(repo):
-    assert run(repo, "set", "demo", "T9", "done") == 1
+    assert run(repo, "set", "demo", "T9", "verifying") == 1
     assert run(repo, "set", "demo", "T1", "pass") == 1
     assert run(repo, "set", "demo", "AC1", "done") == 1
+    assert run(repo, "set", "demo", "T1", "done") == 1      # done is reached by the checks, not set
 
 
 def test_task_repo_records_and_validates_the_commit_in_that_repo(repo, tmp_path_factory):
@@ -301,11 +303,11 @@ def test_task_repo_records_and_validates_the_commit_in_that_repo(repo, tmp_path_
     git(other, "commit", "-qm", "other init")
     other_sha = commit_in(other, "f.txt", "v2\n")
     commit(repo, "v2\n")
-    assert run(repo, "set", "demo", "T1", "done") == 0
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
     text = feature(repo).read_text().replace(
         "    covers: [AC2]\n", "    covers: [AC2]\n    repo: %s\n" % other, 1)
     feature(repo).write_text(text)
-    assert run(repo, "set", "demo", "T2", "done", "--commit", other_sha) == 0
+    assert run(repo, "set", "demo", "T2", "verifying", "--commit", other_sha) == 0
     assert str(data(repo)["tasks"][1]["sha"]) == other_sha
     assert run(repo, "check", "demo") == 0
 
@@ -321,35 +323,36 @@ def commit_in(root, name, content):
 
 def build_all(root):
     commit(root, "a\n")
-    assert run(root, "set", "demo", "T1", "done") == 0
+    assert run(root, "set", "demo", "T1", "verifying") == 0
     commit(root, "b\n")
-    assert run(root, "set", "demo", "T2", "done") == 0
+    assert run(root, "set", "demo", "T2", "verifying") == 0
 
 
 def test_set_check_pass_and_fail(repo):
     build_all(repo)
     assert run(repo, "set", "demo", "AC1", "pass") == 0
     assert run(repo, "set", "demo", "AC2", "fail") == 0
-    checks = data(repo)["checks"]
-    assert [c["status"] for c in checks] == ["pass", "fail"]
+    d = data(repo)
+    assert [c["status"] for c in d["checks"]] == ["pass", "fail"]
+    assert [t["status"] for t in d["tasks"]] == ["done", "verifying"]
     assert run(repo, "check", "demo") == 0
 
 
 def test_set_check_refuses_while_covering_task_is_open(repo):
     commit(repo, "a\n")
-    assert run(repo, "set", "demo", "T1", "done") == 0
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
     assert run(repo, "set", "demo", "AC2", "pass") == 1         # T2 covers AC2 and is open
     assert run(repo, "set", "demo", "AC1", "pass") == 0
 
 
 # ---------------------------------------------------------------- review and finish
 
-def test_review_needs_every_task_done(repo):
+def test_review_needs_every_task_verified(repo):
     commit(repo, "a\n")
-    assert run(repo, "set", "demo", "T1", "done") == 0
-    assert run(repo, "review", "demo") == 1
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
+    assert run(repo, "review", "demo") == 1       # T2 is still todo
     commit(repo, "b\n")
-    assert run(repo, "set", "demo", "T2", "done") == 0
+    assert run(repo, "set", "demo", "T2", "verifying") == 0
     assert run(repo, "review", "demo") == 0
     assert data(repo)["status"] == "review"
 
@@ -505,7 +508,7 @@ def run_split(code, specs, *args):
 def test_specs_outside_root_records_commit_from_root(split):
     code, specs = split
     sha = commit(code, "v2\n")
-    assert run_split(code, specs, "set", "demo", "T1", "done") == 0
+    assert run_split(code, specs, "set", "demo", "T1", "verifying") == 0
     d = yaml.safe_load((specs / "features" / "demo" / "feature.yaml").read_text())
     assert str(d["tasks"][0]["sha"]) == sha
     assert run_split(code, specs, "check", "demo") == 0
@@ -514,7 +517,7 @@ def test_specs_outside_root_records_commit_from_root(split):
 def test_specs_outside_root_still_refuses_uncommitted_code(split):
     code, specs = split
     (code / "code.txt").write_text("dirty\n")
-    assert run_split(code, specs, "set", "demo", "T1", "done") == 1
+    assert run_split(code, specs, "set", "demo", "T1", "verifying") == 1
 
 
 def test_specs_outside_root_reads_its_roadmap(split, capsys):
@@ -536,7 +539,7 @@ def test_untracked_specs_inside_root_do_not_block_done(tmp_path):
     specs = tmp_path / "notes" / "specs"
     write_feature(specs / "features" / "demo")
     commit(tmp_path, "v2\n")
-    assert run_split(tmp_path, specs, "set", "demo", "T1", "done") == 0
+    assert run_split(tmp_path, specs, "set", "demo", "T1", "verifying") == 0
 
 
 # ---------------------------------------------------------------- new and roadmap --approve
@@ -574,7 +577,8 @@ def test_roadmap_approve_stamps_today_and_keeps_the_rest(repo):
     assert run(repo, "roadmap", "--approve") == 0
     text = (repo / ".specs" / "roadmap.yaml").read_text()
     assert yaml.safe_load(text)["approved"] == datetime.date.today()
-    assert text == ROADMAP.replace("approved: 2026-11-10", "approved: %s" % datetime.date.today().isoformat())
+    unchanged = "".join(l for l in text.splitlines(True) if not l.lstrip().startswith("status:"))
+    assert unchanged == ROADMAP.replace("approved: 2026-11-10", "approved: %s" % datetime.date.today().isoformat())
 
 
 def test_roadmap_approve_refuses_an_invalid_roadmap(repo):
@@ -620,3 +624,124 @@ def test_finding_appends_to_an_empty_list(repo):
     run(repo, "finding", "demo", "--none")
     assert run(repo, "finding", "demo", "--text", "x", "--action", "wontfix", "--reason", "y") == 0
     assert len(findings(repo)) == 1
+
+
+# ---------------------------------------------------------------- task state machine
+
+def test_set_done_is_refused_and_explains(repo, capsys):
+    commit(repo, "v2\n")
+    capsys.readouterr()
+    assert run(repo, "set", "demo", "T1", "done") == 1
+    assert "AC<n> pass" in capsys.readouterr().out
+    assert data(repo)["tasks"][0]["status"] == "todo"
+
+
+def test_checks_passing_promote_the_task_to_done(repo):
+    build_all(repo)
+    assert run(repo, "set", "demo", "AC1", "pass") == 0
+    assert [t["status"] for t in data(repo)["tasks"]] == ["done", "verifying"]
+    assert "status: done" in feature(repo).read_text()
+    assert run(repo, "set", "demo", "AC2", "pass") == 0
+    assert [t["status"] for t in data(repo)["tasks"]] == ["done", "done"]
+    assert run(repo, "check", "demo") == 0
+
+
+def test_task_covering_two_criteria_waits_for_both(repo):
+    feature(repo).write_text(FEATURE.replace("covers: [AC1]", "covers: [AC1, AC2]", 1)
+                             .replace("covers: [AC2]", "covers: [AC2]"))
+    commit(repo, "a\n")
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
+    commit(repo, "b\n")
+    assert run(repo, "set", "demo", "T2", "verifying") == 0
+    assert run(repo, "set", "demo", "AC1", "pass") == 0
+    assert data(repo)["tasks"][0]["status"] == "verifying"
+    assert run(repo, "set", "demo", "AC2", "pass") == 0
+    assert [t["status"] for t in data(repo)["tasks"]] == ["done", "done"]
+
+
+def test_a_failing_check_sends_a_done_task_back_to_verifying(repo):
+    build_all(repo)
+    assert run(repo, "set", "demo", "AC1", "pass") == 0
+    assert run(repo, "set", "demo", "AC1", "fail") == 0
+    assert data(repo)["tasks"][0]["status"] == "verifying"
+    assert run(repo, "check", "demo") == 0
+
+
+def test_set_check_refuses_while_covering_task_is_only_started(repo):
+    assert run(repo, "set", "demo", "T1", "doing") == 0
+    assert run(repo, "set", "demo", "AC1", "pass") == 1
+
+
+def test_a_verifying_task_cannot_go_back_to_doing(repo):
+    commit(repo, "a\n")
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
+    assert run(repo, "set", "demo", "T1", "doing") == 1
+
+
+def test_verifying_releases_the_dependent_task(repo):
+    commit(repo, "a\n")
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
+    assert run(repo, "set", "demo", "T2", "doing") == 0
+
+
+def test_check_rejects_verifying_without_sha_and_done_with_pending_check(repo, capsys):
+    code, out = check_output(repo, capsys, FEATURE.replace("status: todo   # task comment", "status: verifying"))
+    assert code == 1 and "T1 is verifying without a 'sha'" in out
+    sha = commit(repo, "a\n")
+    text = FEATURE.replace("status: todo   # task comment", "status: done\n    sha: %s" % sha)
+    code, out = check_output(repo, capsys, text)
+    assert code == 1 and "T1 is done but check AC1 is pending" in out
+
+
+def test_check_rejects_a_started_task_whose_blocker_is_still_todo(repo, capsys):
+    code, out = check_output(repo, capsys, FEATURE.replace("status: todo\n", "status: doing\n"))
+    assert code == 1 and "T2 is doing but its blocker T1" in out
+
+
+def test_status_does_not_list_a_verifying_task_as_ready(repo, capsys):
+    commit(repo, "a\n")
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
+    capsys.readouterr()
+    assert run(repo, "status", "demo") == 0
+    out = capsys.readouterr().out
+    assert "verifying T1" in out and "ready    T2" in out and "ready    T1" not in out
+
+
+# ---------------------------------------------------------------- roadmap status written
+
+def test_roadmap_writes_the_status_of_features_and_milestones(repo):
+    write_roadmap(repo)
+    link_feature(repo, "F1.1", status="building")
+    assert run(repo, "roadmap") == 0
+    road = yaml.safe_load((repo / ".specs" / "roadmap.yaml").read_text())
+    m1, m2 = road["milestones"]
+    assert [f["status"] for f in m1["features"]] == ["building", "planned"]
+    assert (m1["status"], m2["status"]) == ("building", "planned")
+    assert "approved: 2026-11-10" in (repo / ".specs" / "roadmap.yaml").read_text()
+
+
+def test_roadmap_status_follows_the_feature_commands(repo):
+    write_roadmap(repo)
+    link_feature(repo, "F1.1", status="approved")
+    assert run(repo, "set", "demo", "T1", "doing") == 0
+    road = yaml.safe_load((repo / ".specs" / "roadmap.yaml").read_text())
+    assert road["milestones"][0]["features"][0]["status"] == "building"
+    assert road["milestones"][0]["status"] == "building"
+
+
+def test_roadmap_rewrites_a_status_edited_by_hand(repo):
+    write_roadmap(repo)
+    link_feature(repo, "F1.1", status="approved")
+    assert run(repo, "roadmap") == 0
+    path = repo / ".specs" / "roadmap.yaml"
+    path.write_text(path.read_text().replace("status: approved", "status: done", 1))
+    assert run(repo, "roadmap") == 0
+    assert yaml.safe_load(path.read_text())["milestones"][0]["features"][0]["status"] == "approved"
+
+
+def test_milestone_is_done_when_all_its_features_are(repo):
+    write_roadmap(repo)
+    link_feature(repo, "F1.1", status="done")
+    assert run(repo, "roadmap") == 0
+    road = yaml.safe_load((repo / ".specs" / "roadmap.yaml").read_text())
+    assert road["milestones"][0]["status"] == "building"      # F1.2 still planned

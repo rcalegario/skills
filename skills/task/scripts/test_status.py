@@ -10,12 +10,16 @@ import status  # noqa: E402
 ACS = """\
 - id: AC-1
   text: "The build produces a template."
+  status: decided
   requirements:
     - id: AC-1.1
       text: "a separate template exists"
+      status: decided
       decision: D-01
       validations: [V-01]
 """
+
+DECIDING = ACS.replace("status: decided", "status: deciding")   # while a child decision is open
 
 D01 = """\
 id: D-01
@@ -98,6 +102,7 @@ def test_clean_folder_passes(task, capsys):
 
 def test_open_child_moves_requirement_back_to_deciding(task):
     write(task, "decisions/D-02-name.yaml", D02)
+    write(task, "acs.yaml", DECIDING)
     t = loaded(task)
     assert t.req_status({"id": "AC-1.1", "decision": "D-01", "validations": ["V-01"]}) == "deciding"
     assert not t.failures
@@ -151,6 +156,7 @@ def test_context_section_ids_are_known(task):
 
 def test_gate_plan_blocks_open_and_warns_proposed(task, capsys):
     write(task, "decisions/D-02-name.yaml", D02)
+    write(task, "acs.yaml", DECIDING)
     assert run(task, "--gate", "plan") == 1
     write(task, "decisions/D-02-name.yaml", D02.replace("status: open", "status: proposed"))
     assert run(task, "--gate", "plan") == 0
@@ -223,10 +229,12 @@ vision: x
 milestones:
   - id: M1
     title: M
+    status: planned
     outcome: o
     features:
       - id: F1.2
         title: Name step
+        status: planned
         goal: g
         done_when: d
         decisions: [D-02]
@@ -237,10 +245,11 @@ milestones:
 def test_spike_proves_no_requirement_and_raises_no_warning(task):
     write(task, "decisions/D-02-name.yaml", D02.replace("status: open", "status: proposed"))
     write(task, "validations/V-02-spike.yaml", SPIKE)
+    write(task, "acs.yaml", DECIDING)
     t = loaded(task)
     assert not t.failures
     assert not any("V-02" in w for w in t.warnings)
-    write(task, "acs.yaml", ACS.replace("validations: [V-01]", "validations: [V-01, V-02]"))
+    write(task, "acs.yaml", DECIDING.replace("validations: [V-01]", "validations: [V-01, V-02]"))
     assert any("lists spike V-02" in f for f in loaded(task).failures)
 
 
@@ -272,12 +281,14 @@ def test_gate_spec_blocks_feature_until_spike_passes(task, capsys):
     write(task, "decisions/D-02-name.yaml", D02.replace("status: open", "status: proposed"))
     write(task, "validations/V-02-spike.yaml", SPIKE)
     write(task, ".specs/roadmap.yaml", ROADMAP)
+    write(task, "acs.yaml", DECIDING)
     assert run(task, "--gate", "spec", "--feature", "F1.2") == 1
     assert "F1.2 waits for spike V-02, which decides D-02" in capsys.readouterr().out
     write(task, "validations/V-02-spike.yaml",
           SPIKE.replace("status: pending", "status: passed\ndate: 2026-11-13\nevidence: |\n  Path A works."))
     write(task, "decisions/D-02-name.yaml",
           D02.replace("status: open", "status: decided") + "decision: |\n  A.\nwhy: |\n  V-02 passed.\n")
+    write(task, "acs.yaml", ACS)
     assert run(task, "--gate", "spec", "--feature", "F1.2") == 0
 
 
@@ -305,7 +316,7 @@ def test_find_prints_where_an_id_is_defined(task, capsys):
     assert run(task, "--find", "D-01") == 0
     assert capsys.readouterr().out.strip() == "decisions/D-01-source.yaml:1"
     assert run(task, "--find", "AC-1.1") == 0
-    assert capsys.readouterr().out.strip() == "acs.yaml:4"
+    assert capsys.readouterr().out.strip() == "acs.yaml:5"
 
 
 def test_find_prints_every_definition(task, capsys):
@@ -353,3 +364,74 @@ def test_dated_folder_name_is_checked(tmp_path):
     root = tmp_path / "iac" / "metrics-base-image"
     write(root, "README.md", MAIN_README)
     assert any("YYYY-MM-DD-HHMM-<slug>" in f for f in loaded(root).failures)
+
+
+# ---------------------------------------------------------------- stored status
+
+def failures(root):
+    return loaded(root).failures
+
+
+def test_requirement_and_item_need_a_stored_status(task):
+    write(task, "acs.yaml", ACS.replace("      status: decided\n", ""))
+    assert any("AC-1.1: no status" in f for f in failures(task))
+    write(task, "acs.yaml", ACS.replace("  status: decided\n  requirements", "  requirements"))
+    assert any("AC-1: no status" in f for f in failures(task))
+
+
+def test_stored_status_must_match_the_computed_one(task):
+    write(task, "acs.yaml", ACS.replace("      status: decided", "      status: concluded"))
+    fails = failures(task)
+    assert any("AC-1.1: status is concluded but" in f and "decided" in f and "task.py sync" in f for f in fails)
+
+
+def test_stored_item_status_follows_its_requirements(task):
+    write(task, "acs.yaml", ACS.replace("  status: decided\n  requirements", "  status: built\n  requirements"))
+    assert any("AC-1: status is built but" in f for f in failures(task))
+
+
+def test_stored_status_must_be_a_known_one(task):
+    write(task, "acs.yaml", ACS.replace("      status: decided", "      status: finished"))
+    assert any("AC-1.1: status must be one of" in f for f in failures(task))
+
+
+def test_dropped_item_needs_no_computed_status(task):
+    write(task, "acs.yaml", ACS + "\n- id: X-1\n  text: extra\n  status: dropped\n  requirements: []\n")
+    assert not failures(task)
+
+
+def test_status_follows_the_decisions_in_the_stored_file(task):
+    write(task, "decisions/D-02-name.yaml", D02)
+    assert any("AC-1.1: status is decided but" in f and "deciding" in f for f in failures(task))
+
+
+ROAD = """\
+vision: x
+milestones:
+  - id: M1
+    title: M
+    status: {m}
+    outcome: o
+    features:
+      - id: F1.1
+        title: Template
+        status: {f}
+        goal: g
+        done_when: d
+        blocked_by: []
+"""
+
+
+def test_roadmap_status_must_match_the_features(task):
+    write(task, ".specs/features/F1.1-template/feature.yaml", (FEATURE + "roadmap: F1.1\n").format(status="building"))
+    write(task, ".specs/roadmap.yaml", ROAD.format(m="building", f="building"))
+    assert not failures(task)
+    write(task, ".specs/roadmap.yaml", ROAD.format(m="building", f="planned"))
+    assert any("F1.1: roadmap status is planned but" in f and "building" in f for f in failures(task))
+    write(task, ".specs/roadmap.yaml", ROAD.format(m="planned", f="building"))
+    assert any("M1: roadmap status is planned but" in f and "building" in f for f in failures(task))
+
+
+def test_roadmap_without_status_fails(task):
+    write(task, ".specs/roadmap.yaml", ROAD.format(m="planned", f="planned").replace("    status: planned\n", "", 1))
+    assert any("M1: no roadmap status" in f for f in failures(task))

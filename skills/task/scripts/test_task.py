@@ -134,3 +134,68 @@ def test_consolidate_sets_the_brief_date(folder):
     write(folder, "brief.md", "---\ndate: 2026-01-01   # last consolidation\n---\n# Brief\n")
     assert run(folder, "consolidate") == 0
     assert text(folder, "brief.md") == "---\ndate: %s   # last consolidation\n---\n# Brief\n" % TODAY
+
+
+# ---------------------------------------------------------------- sync and state machines
+
+def test_sync_writes_the_status_of_every_requirement_and_item(folder):
+    write(folder, "acs.yaml", "# outcomes\n" + ACS.replace("      status: decided\n", "").replace("  status: decided\n", ""))
+    assert run(folder, "sync") == 0
+    acs = load(folder, "acs.yaml")
+    assert acs[0]["status"] == "decided" and acs[0]["requirements"][0]["status"] == "decided"
+    assert text(folder, "acs.yaml").startswith("# outcomes\n")
+    assert run(folder, "sync") == 0
+    assert load(folder, "acs.yaml") == acs
+
+
+def test_sync_overwrites_a_status_edited_by_hand(folder):
+    write(folder, "acs.yaml", ACS.replace("      status: decided", "      status: concluded"))
+    assert run(folder, "sync") == 0
+    assert load(folder, "acs.yaml")[0]["requirements"][0]["status"] == "decided"
+
+
+def test_sync_leaves_a_dropped_item_alone(folder):
+    write(folder, "acs.yaml", ACS + "\n- id: X-1\n  text: extra\n  status: dropped\n  requirements: []\n")
+    assert run(folder, "sync") == 0
+    assert load(folder, "acs.yaml")[1]["status"] == "dropped"
+
+
+def test_commands_keep_the_stored_status_in_step(folder):
+    assert run(folder, "new", "decision", "child", "--title", "Child", "--question", "Q?", "--born-from", "D-01") == 0
+    acs = load(folder, "acs.yaml")
+    assert acs[0]["requirements"][0]["status"] == "deciding" and acs[0]["status"] == "deciding"
+    assert run(folder, "decide", "D-02", "--decision", "x", "--why", "y") == 0
+    assert load(folder, "acs.yaml")[0]["requirements"][0]["status"] == "decided"
+    assert run(folder, "validate", "V-01", "--status", "passed", "--evidence", "Seen.") == 0
+    assert load(folder, "acs.yaml")[0]["status"] == "decided"      # needs_code and no feature yet
+
+
+def test_sync_writes_the_roadmap_status(folder):
+    write(folder, ".specs/features/F1.1-template/feature.yaml",
+          "id: F1.1-template\ntitle: T\nsize: M\nstatus: building\nroadmap: F1.1\n")
+    write(folder, ".specs/roadmap.yaml", "vision: x\nmilestones:\n  - id: M1\n    title: M\n    outcome: o\n"
+          "    features:\n      - id: F1.1\n        title: Template\n        goal: g\n        done_when: d\n"
+          "        blocked_by: []\n")
+    assert run(folder, "sync") == 0
+    road = load(folder, ".specs/roadmap.yaml")
+    assert road["milestones"][0]["status"] == "building"
+    assert road["milestones"][0]["features"][0]["status"] == "building"
+
+
+def test_a_decided_decision_cannot_be_decided_again(folder):
+    before = text(folder, "decisions/D-01-source.yaml")
+    assert run(folder, "decide", "D-01", "--decision", "other", "--why", "z") == 1
+    assert text(folder, "decisions/D-01-source.yaml") == before
+
+
+def test_a_dropped_validation_cannot_be_run(folder):
+    assert run(folder, "validate", "V-01", "--status", "dropped", "--evidence", "Gone.") == 0
+    assert run(folder, "validate", "V-01", "--status", "passed", "--evidence", "Seen.") == 1
+    assert load(folder, "validations/V-01-published.yaml")["status"] == "dropped"
+
+
+def test_a_closed_pending_item_cannot_be_closed_again(folder):
+    run(folder, "new", "pending", "--with", "ana", "--action", "Ask")
+    assert run(folder, "close", "P-1") == 0
+    assert run(folder, "close", "P-1", "--status", "dropped") == 1
+    assert load(folder, "pending.yaml")[0]["status"] == "done"
