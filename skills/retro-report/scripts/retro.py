@@ -1,7 +1,7 @@
 """Retro helper for Claude Code sessions.
 
   retro.py digest <session.jsonl>...   each session's calls, failures, repeats and cost, as a YAML list
-  retro.py validate <retro-folder>     check its retro.yaml and sessions.yaml
+  retro.py validate <retro-folder>     check its retro.yaml, and that sessions.yaml digests each session it names
 """
 import argparse
 import json
@@ -317,7 +317,20 @@ def validate(folder):
     retro = _load(Path(folder) / "retro.yaml", errors)
     if errors:
         return errors
-    return [f"retro.yaml: {e}" for e in retro_errors(retro)]
+    errors = [f"retro.yaml: {e}" for e in retro_errors(retro)]
+    sessions = _load(Path(folder) / "sessions.yaml", errors)
+    if errors:
+        return errors
+    return [f"sessions.yaml: {e}" for e in session_errors(retro["sources"]["sessions"], sessions)]
+
+
+def session_errors(named, digests):
+    """Ids named in the sources with no digest, and digests of sessions the sources do not name."""
+    if not isinstance(digests, list) or not all(isinstance(d, dict) and _is_text(d.get("session")) for d in digests):
+        return ["must be a list of digests"]
+    digested = [d["session"] for d in digests]
+    return ([f"{s}: named in sources.sessions but not digested" for s in named if s not in digested]
+            + [f"{s}: digested but not in sources.sessions" for s in digested if s not in named])
 
 
 def main(argv=None):

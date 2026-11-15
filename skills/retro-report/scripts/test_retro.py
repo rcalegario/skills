@@ -282,3 +282,17 @@ def test_validate_feature_and_wontfix_exclusive(tmp_path, capsys):
     code, out, err = run(capsys, "validate", str(folder))
     assert code == 1
     assert err == "retro.yaml: findings[2]: feature and wontfix are exclusive\n"
+
+
+def test_validate_sessions_match(tmp_path, capsys):
+    folder = retro_folder(tmp_path, sources={"sessions": [SID, "s-2"]})
+    (folder / "sessions.yaml").write_text(yaml.safe_dump(SESSIONS + [{"session": "s-3"}]))
+    code, out, err = run(capsys, "validate", str(folder))
+    assert code == 1
+    assert err.splitlines() == ["sessions.yaml: s-2: named in sources.sessions but not digested",
+                                "sessions.yaml: s-3: digested but not in sources.sessions"]
+
+    (folder / "sessions.yaml").write_text("session: s-1\n")
+    assert run(capsys, "validate", str(folder))[2] == "sessions.yaml: must be a list of digests\n"
+    (folder / "sessions.yaml").unlink()
+    assert run(capsys, "validate", str(folder))[2] == "sessions.yaml: missing\n"
