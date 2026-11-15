@@ -1,0 +1,33 @@
+#!/bin/sh
+# Checks skills.yaml, then runs the tests of the repo scripts and of each skill the commit touches.
+# Enable per clone: see SETUP.md.
+root=$(git rev-parse --show-toplevel)
+staged=$(git diff --cached --name-only)
+# Tests may run git in temp repos: past this point, keep them off the index being committed.
+unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE
+status=0
+skills() { uv run -q --no-project --with pyyaml python "$root/scripts/skills.py" --root "$root" "$@"; }
+
+if ! out=$(skills validate 2>&1); then
+  printf 'pre-commit: skills.yaml check failed\n%s\n' "$out" >&2
+  exit 1
+fi
+
+if printf '%s\n' "$staged" | grep -q '^scripts/'; then
+  if ! out=$(cd "$root" && uv run -q --no-project --with pytest --with pyyaml python -m pytest -q scripts 2>&1); then
+    printf 'pre-commit: scripts tests failed\n%s\n' "$out" >&2
+    status=1
+  fi
+fi
+
+for name in $(printf '%s\n' "$staged" | sed -n 's|^skills/\([^/]*\)/.*|\1|p' | sort -u); do
+  [ -d "$root/skills/$name" ] || continue
+  cmd=$(skills test-cmd "$name") || { status=1; continue; }
+  [ -n "$cmd" ] || continue
+  if ! out=$(cd "$root/skills/$name" && sh -c "$cmd" 2>&1); then
+    printf 'pre-commit: tests of %s failed\n%s\n' "$name" "$out" >&2
+    status=1
+  fi
+done
+
+exit $status
