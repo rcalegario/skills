@@ -1,6 +1,6 @@
 """Retro helper for Claude Code sessions.
 
-  retro.py digest <session.jsonl>   one session's calls, failures, repeats and cost, as YAML
+  retro.py digest <session.jsonl>...   each session's calls, failures, repeats and cost, as a YAML list
 """
 import argparse
 import json
@@ -234,15 +234,15 @@ def digest(path):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
-    d = sub.add_parser("digest", help="digest one Claude Code session log")
-    d.add_argument("log")
+    d = sub.add_parser("digest", help="digest Claude Code session logs, in the order given")
+    d.add_argument("logs", nargs="+")
     args = parser.parse_args(argv)
 
     if args.cmd == "digest":
         try:
-            result = digest(args.log)
-        except NotASessionLog:
-            print(f"{args.log} is not a Claude Code session log", file=sys.stderr)
+            result = [digest(log) for log in args.logs]
+        except NotASessionLog as e:
+            print(f"{e} is not a Claude Code session log", file=sys.stderr)
             return 1
         print(yaml.safe_dump(result, sort_keys=False, allow_unicode=True, width=200), end="")
         return 0

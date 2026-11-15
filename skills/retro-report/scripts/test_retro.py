@@ -62,7 +62,7 @@ def digest(tmp_path, log, capsys):
     path = log.write(tmp_path / f"{SID}.jsonl")
     code, out, err = run(capsys, "digest", str(path))
     assert code == 0, err
-    return yaml.safe_load(out)
+    return yaml.safe_load(out)[0]
 
 
 def test_digest_session_and_calls_per_tool(tmp_path, capsys):
@@ -208,3 +208,11 @@ def test_subagent_without_meta_and_parent_tokens_apart(tmp_path, capsys):
     d = digest(tmp_path, Log().prompt().call("Agent", {"prompt": "x"}, usage=usage(1, 1, 1, 1)), capsys)
     assert d["subagents"][0]["description"] is None
     assert d["tokens"] == {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}
+
+
+def test_digest_many_logs_as_list(tmp_path, capsys):
+    a = Log(cwd="/work/a").prompt().bash("ls").write(tmp_path / "a.jsonl")
+    b = Log(cwd="/work/b").prompt().bash("ls").bash("pwd").write(tmp_path / "b.jsonl")
+    code, out, err = run(capsys, "digest", str(b), str(a))
+    assert code == 0, err
+    assert [(d["project"], d["calls"]["total"]) for d in yaml.safe_load(out)] == [("/work/b", 2), ("/work/a", 1)]
