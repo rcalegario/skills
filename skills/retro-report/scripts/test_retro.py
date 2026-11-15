@@ -1,4 +1,5 @@
 """Tests for retro.py. Run: python -m pytest <skill-dir>/scripts -q"""
+import datetime
 import json
 import os
 import sys
@@ -216,3 +217,68 @@ def test_digest_many_logs_as_list(tmp_path, capsys):
     code, out, err = run(capsys, "digest", str(b), str(a))
     assert code == 0, err
     assert [(d["project"], d["calls"]["total"]) for d in yaml.safe_load(out)] == [("/work/b", 2), ("/work/a", 1)]
+
+
+def finding(id=1, **kw):
+    return {"id": id, "category": "automated-checks", "what": "python is missing", "fix": "a hook runs it",
+            **kw}
+
+
+def retro_folder(tmp_path, drop=(), **retro):
+    """A retro folder whose retro.yaml is a valid one changed by retro, minus the fields in drop."""
+    data = {"date": datetime.date(2026, 11, 14), "title": "checkers on commit", "summary": "Built a hook.\n",
+            "sources": {"sessions": [SID]}, "findings": [finding(feature="F1.1")],
+            "decisions": ["Hooks live in .githooks/."], **retro}
+    for key in drop:
+        data.pop(key)
+    folder = tmp_path / "2026-11-14-checkers"
+    folder.mkdir(exist_ok=True)
+    (folder / "retro.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
+    (folder / "sessions.yaml").write_text(yaml.safe_dump(SESSIONS, sort_keys=False))
+    return folder
+
+
+SESSIONS = [{"session": SID, "project": "/work/repo", "duration_s": 754, "calls": {"total": 32},
+             "failures": {"command_missing": [{"call": 20}], "other": [{"call": 3}, {"call": 9}]},
+             "search_streaks": [{"calls": [1, 2, 3]}], "cost_usd": 1.2647382999999996}]
+
+
+def test_validate_ok(tmp_path, capsys):
+    folder = retro_folder(tmp_path)
+    assert run(capsys, "validate", str(folder)) == (0, f"{folder} OK\n", "")
+
+
+def test_validate_missing_and_wrong_types(tmp_path, capsys):
+    folder = retro_folder(tmp_path, drop=["title"], date="soon", summary=3, decisions="none",
+                          findings=[finding(1), finding(1, what=""), finding(None), finding(2, sessions="s-1")])
+    code, out, err = run(capsys, "validate", str(folder))
+    assert code == 1
+    assert err.splitlines() == [
+        "retro.yaml: date: must be a date (YYYY-MM-DD)",
+        "retro.yaml: title: missing",
+        "retro.yaml: summary: must be text",
+        "retro.yaml: decisions: must be a list of text",
+        "retro.yaml: findings[1].id: used twice",
+        "retro.yaml: findings[1].what: must be text",
+        "retro.yaml: findings[#3].id: must be an integer",
+        "retro.yaml: findings[2].sessions: must be a list of text",
+    ]
+
+    (folder / "retro.yaml").unlink()
+    assert run(capsys, "validate", str(folder))[2] == "retro.yaml: missing\n"
+
+
+def test_validate_unknown_category(tmp_path, capsys):
+    folder = retro_folder(tmp_path, findings=[finding(4, category="speed")])
+    code, out, err = run(capsys, "validate", str(folder))
+    assert code == 1
+    assert err == ("retro.yaml: findings[4].category: 'speed' is not one of navigation, automated-checks, "
+                   "coding-standards, global-agents-md, tool-economy, no-ops, information-access\n")
+
+
+def test_validate_feature_and_wontfix_exclusive(tmp_path, capsys):
+    folder = retro_folder(tmp_path, findings=[finding(2, feature="F1.2", wontfix="not worth it"),
+                                              finding(3, wontfix="rare")])
+    code, out, err = run(capsys, "validate", str(folder))
+    assert code == 1
+    assert err == "retro.yaml: findings[2]: feature and wontfix are exclusive\n"

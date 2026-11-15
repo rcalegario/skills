@@ -1,13 +1,14 @@
 """Retro helper for Claude Code sessions.
 
   retro.py digest <session.jsonl>...   each session's calls, failures, repeats and cost, as a YAML list
+  retro.py validate <retro-folder>     check its retro.yaml and sessions.yaml
 """
 import argparse
 import json
 import re
 import sys
 from collections import Counter
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 try:
@@ -38,6 +39,9 @@ SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")
 # A redirect to a file; /dev/null and &N are not writes.
 WRITE_REDIRECT = re.compile(r">>?\s*(?!/dev/null\b|&)\S")
 WRITE_FLAGS = {"-i", "-delete"}
+# The improvement categories of a retro finding, after the installed retro skill.
+CATEGORIES = ["navigation", "automated-checks", "coding-standards", "global-agents-md", "tool-economy",
+              "no-ops", "information-access"]
 TOKEN_FIELDS = {"input": "input_tokens", "output": "output_tokens",
                 "cache_read": "cache_read_input_tokens", "cache_write": "cache_creation_input_tokens"}
 
@@ -231,11 +235,98 @@ def digest(path):
     }
 
 
+def _is_text(v):
+    return isinstance(v, str) and bool(v.strip())
+
+
+def _is_text_list(v):
+    return isinstance(v, list) and all(_is_text(x) for x in v)
+
+
+def _is_id(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _field(data, key, check, problem, errors, label=None, required=True):
+    if key not in data:
+        if required:
+            errors.append(f"{label or key}: missing")
+    elif not check(data[key]):
+        errors.append(f"{label or key}: {problem}")
+
+
+def _load(path, errors):
+    if not path.is_file():
+        errors.append(f"{path.name}: missing")
+        return None
+    try:
+        return yaml.safe_load(path.read_text())
+    except yaml.YAMLError as e:
+        errors.append(f"{path.name}: not valid YAML: {str(e).splitlines()[0]}")
+        return None
+
+
+def finding_errors(findings):
+    """Each finding's problems, the finding named by its id, or by #position when its id is unusable."""
+    errors, seen = [], set()
+    for pos, f in enumerate(findings, 1):
+        if not isinstance(f, dict):
+            errors.append(f"findings[#{pos}]: must be a mapping")
+            continue
+        name = f"findings[{f['id']}]" if _is_id(f.get("id")) else f"findings[#{pos}]"
+        if _is_id(f.get("id")) and f["id"] in seen:
+            errors.append(f"{name}.id: used twice")
+        else:
+            _field(f, "id", _is_id, "must be an integer", errors, f"{name}.id")
+        seen.add(f.get("id"))
+        _field(f, "category", lambda v: v in CATEGORIES,
+               f"{f.get('category')!r} is not one of {', '.join(CATEGORIES)}", errors, f"{name}.category")
+        for key in ("what", "fix"):
+            _field(f, key, _is_text, "must be text", errors, f"{name}.{key}")
+        for key in ("feature", "wontfix"):
+            _field(f, key, _is_text, "must be text", errors, f"{name}.{key}", required=False)
+        _field(f, "sessions", _is_text_list, "must be a list of text", errors, f"{name}.sessions", required=False)
+        if "feature" in f and "wontfix" in f:
+            errors.append(f"{name}: feature and wontfix are exclusive")
+    return errors
+
+
+def retro_errors(retro):
+    """The problems of a parsed retro.yaml, each as '<field>: <problem>'."""
+    if not isinstance(retro, dict):
+        return ["must be a mapping"]
+    errors = []
+    _field(retro, "date", lambda v: isinstance(v, date), "must be a date (YYYY-MM-DD)", errors)
+    for key in ("title", "summary"):
+        _field(retro, key, _is_text, "must be text", errors)
+    _field(retro, "sources", lambda v: isinstance(v, dict), "must be a mapping", errors)
+    if isinstance(retro.get("sources"), dict):
+        _field(retro["sources"], "sessions", lambda v: _is_text_list(v) and v, "must be a list of session ids",
+               errors, "sources.sessions")
+    _field(retro, "findings", lambda v: isinstance(v, list), "must be a list", errors)
+    _field(retro, "decisions", _is_text_list, "must be a list of text", errors)
+    _field(retro, "outcome", _is_text, "must be text", errors, required=False)
+    if isinstance(retro.get("findings"), list):
+        errors += finding_errors(retro["findings"])
+    return errors
+
+
+def validate(folder):
+    """Every problem of a retro folder, one line each; empty when it is valid."""
+    errors = []
+    retro = _load(Path(folder) / "retro.yaml", errors)
+    if errors:
+        return errors
+    return [f"retro.yaml: {e}" for e in retro_errors(retro)]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("digest", help="digest Claude Code session logs, in the order given")
     d.add_argument("logs", nargs="+")
+    v = sub.add_parser("validate", help="check a retro folder's retro.yaml and sessions.yaml")
+    v.add_argument("folder")
     args = parser.parse_args(argv)
 
     if args.cmd == "digest":
@@ -246,6 +337,13 @@ def main(argv=None):
             return 1
         print(yaml.safe_dump(result, sort_keys=False, allow_unicode=True, width=200), end="")
         return 0
+    if args.cmd == "validate":
+        errors = validate(args.folder)
+        for e in errors:
+            print(e, file=sys.stderr)
+        if not errors:
+            print(f"{args.folder} OK")
+        return 1 if errors else 0
     return 2
 
 
