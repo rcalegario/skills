@@ -12,7 +12,7 @@ start ──► decide ──► consolidate ──► plan (/flow) ──► bu
                                                  └─ spike: runs before the SPEC of a feature whose decision waits on it
 ```
 
-`<skill-dir>` is the folder holding this file. The task folder format (files, ids, the decision tree, status rules) is in `<skill-dir>/reference/format.md`: read it before the first write in a session. Templates are in `<skill-dir>/templates/`. Run `python <skill-dir>/scripts/status.py <task>` (needs PyYAML) after every change to the task folder.
+`<skill-dir>` is the folder holding this file. The task folder format (files, ids, the decision tree, status rules) is in `<skill-dir>/reference/format.md`: read it before the first write in a session. Templates are in `<skill-dir>/templates/`. Run `python3 <skill-dir>/scripts/status.py <task>` (needs PyYAML) after every change to the task folder; `--find <id>` prints where an id is defined.
 
 Write every file in English. Talk to the user in the language they use.
 
@@ -34,14 +34,14 @@ The `.md` files (context, `brief.md`, the specs) are for the user to read: where
 
 ## Home and task folder
 
-`<skill-dir>/config.yaml` holds `home` (the central folder, e.g. `~/projects/home`). When it is missing, ask for it and write it. The home is one git repository with its own `CLAUDE.md`; read it at the start of a session. When the folder does not exist yet, propose creating it and, on a yes: `git init`, a `CLAUDE.md` saying the home holds task folders that follow this skill, and a `.gitignore` with `tasks/*/repos/` so the worktrees stay out of the home's history.
+`<skill-dir>/config.yaml` holds `home` (the central folder, e.g. `~/projects/home`). When it is missing, ask for it and write it. The home is one git repository with its own `CLAUDE.md`; read it at the start of a session. When the folder does not exist yet, propose creating it and, on a yes: `git init`, a `CLAUDE.md` whose line for the tasks says `tasks/<slug>/` follows this skill (`<skill-dir>/reference/format.md`), with status by `python3 <skill-dir>/scripts/status.py <folder>` and ids located by its `--find <id>`, and a `.gitignore` with `tasks/*/repos/` so the worktrees stay out of the home's history.
 
 Every task lives in `<home>/tasks/<slug>/`, the slug in kebab-case (`ponto-export-csv`).
 
 ## Where to open Claude
 
 - **In the home**, naming the task (`/task <slug>`): for decide, consolidate, plan and review, or to see every task. Read each repo's `AGENTS.md` / `CLAUDE.md` explicitly: they are not loaded up front from here, and the repo's `.claude/` settings and hooks do not apply.
-- **In a worktree**, for the build when the repo's hooks and settings matter: `cd <home>/tasks/<slug>/repos/<repo> && claude --add-dir ../..` (or `/add-dir ../..` mid-session). The `CLAUDE.md` of the task and of the home load on their own from the parent folders; `--add-dir` lets you edit the task folder.
+- **In a worktree**, for the build when the repo's hooks and settings matter: `cd <home>/tasks/<slug>/repos/<repo> && claude --add-dir ../..` (or `/add-dir ../..` mid-session). The home's `CLAUDE.md` loads on its own from the parent folders; `--add-dir` lets you edit the task folder.
 
 Either way `/task <slug>` resumes the same way, and task-folder commits go to the home with `git -C <home>`.
 
@@ -59,7 +59,7 @@ Runs when `/task <slug>` finds no task folder.
 
 1. **Read the base.** Ask whether there is a base text: an issue, a ticket pasted or linked, a note, a draft. Read it whole, comments included (they often carry what the description lacks). Then invoke the `grilling` skill on it until the problem, who it serves, what stays out, and the outcomes that make it done are settled. When the base text has acceptance criteria, they are the outcomes; grill the gaps.
 2. **Repos.** Ask which repos the work changes, proposing the most likely ones. For each, create a worktree inside the task folder: `git -C <origin> worktree add <task>/repos/<repo> -b <branch>`, with the branch named by the repo's convention (fallback `<type>/<slug>`). For a repo whose checkout is large (hundreds of MB), propose `git sparse-checkout set <dirs>` on the worktree, with only the folders the work touches. Read each repo's `AGENTS.md` / `CLAUDE.md` now: they do not load on their own from here.
-3. **Folder.** Create it from the templates: `README.md` (the base text verbatim, with its link; the problem, who it serves, what stays out), `CLAUDE.md`, empty `pending.yaml`, `journal.yaml` with J-001. Fill `repos:` in the README header.
+3. **Folder.** Create it from the templates: `README.md` (the base text verbatim, with its link; the problem, who it serves, what stays out), empty `pending.yaml`, `journal.yaml` with J-001. Fill `repos:` in the README header.
 4. **Facts.** Read the code the work touches and write `context/now.md` with code `NOW`: facts only, each section with an id, the current flow or structure drawn where it is the point (call tree, file tree, Mermaid).
 5. **Items.** Propose, in one message, the split of every outcome from step 1 (written as `AC-n`; anything beyond the base text as `X-n`) into requirements, with a first root decision for each. Write `acs.yaml`, the root decisions (`open` or `proposed`) and their validations only after the user confirms the split.
 6. Run `status.py`, commit, and continue with **decide**.

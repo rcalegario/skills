@@ -17,7 +17,6 @@ A task folder records the facts, decisions, plan and proof behind one piece of w
 | `journal.yaml` | YAML | events in date order (`J-nnn`) |
 | `brief.md` | md + YAML header | the consolidated view: today, target, path, open items |
 | `.specs/` | `/flow` | `roadmap.yaml` and `features/<id>/` with `spec.md` and `feature.yaml` |
-| `CLAUDE.md` | md | pointer to this file for any agent that opens the folder |
 | `repos/<repo>/` | git worktree | the code, on the task's branch; ignored by the home repo and by `status.py` |
 
 Where each thing goes: **fact** → context; **choice** → decision; **change to the code** → a `/flow` feature; **proof** → validation; **experiment that picks an option** → spike (a validation with `decides`); **action with someone else** → pending; **event** (something read, decided, changed) → journal. Cite a fact by its id; never copy it.

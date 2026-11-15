@@ -11,7 +11,7 @@ repos:
 
 # <slug> <title>
 
-Folder rules in [CLAUDE.md](CLAUDE.md). Items split into requirements in [acs.yaml](acs.yaml).
+Folder rules in the `/task` skill's `reference/format.md`. Items split into requirements in [acs.yaml](acs.yaml).
 
 ## Base text (verbatim)
 
