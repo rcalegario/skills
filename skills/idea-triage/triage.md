@@ -2,7 +2,7 @@
 
 The triage walks a funnel and ends on one **verdict**:
 
-1. `exists`: a catalogued project or a GitHub repo already answers the idea;
+1. `exists`: a catalogued project or a repo in the radar already answers the idea;
 2. `feature`: the idea fits a catalogued project, which becomes the target;
 3. `route`: a module in the central, the default for anything new;
 4. `standalone`: a project of its own, only when one of these holds:
@@ -23,11 +23,11 @@ Done when you hold the idea in one sentence and either no record covers it or th
 ## 2. Candidates
 
 - **Catalog:** read `<home>/catalog/index.yaml`. A candidate is a project whose `question`, `features` or `entities` answer part of the idea; `domain` alone only narrows the search. List each one with the field that matched and how far it covers the idea. Run `catalog.py validate` too and name the folders without a ficha whose line in `<home>/CLAUDE.md` touches the idea: they are blind spots, not candidates.
-- **GitHub:** `gh search repos <2-4 English keywords> --sort stars --limit 5 --json fullName,description,stargazersCount,pushedAt,url`. Phrase searches match too little: when one comes back empty, drop a keyword and run it again. Keep at most 5 repos that actually do the idea, each with stars and last push.
+- **Radar:** read `~/Projects/github-trend/reports/index.yaml`, the GitHub repos already evaluated with `repo-review`. A candidate is a repo whose `question` or `features` answer part of the idea; `domain` alone only narrows the search. List each one with the field that matched, how far it covers the idea, its latest evaluation's `classification`, its `stars` and `last_commit`. The radar is the only external source: when no repo matches, the list says so.
 
 Show both lists before the first question.
 
-Done when every catalogued project has been weighed, and the GitHub list holds the repos found or says what was searched and came back empty.
+Done when every catalogued project and every radar repo has been weighed, and the radar list holds the repos that match or says none does.
 
 ## 3. Quick round
 
@@ -52,11 +52,12 @@ candidates:
   github:
     - repo: lipeng3g/BalanceWindow
       stars: 30
-      pushed: 2026-08-30
+      last_commit: 2026-08-30
+      classification: inspiration
       covers: só projeção, sem orçamento
   blind_spots: []
 verdict: exists              # exists | feature | route | standalone
-target: cashflow-planner     # the project id or GitHub repo for exists and feature; omitted for route and standalone
+target: cashflow-planner     # the project id or radar repo for exists and feature; omitted for route and standalone
 why: |
   A cota diária do cashflow-planner já responde à pergunta.
 # task: tasks/<slug>/      # added in step 6 when the idea becomes a task
