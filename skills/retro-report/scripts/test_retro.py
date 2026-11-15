@@ -428,3 +428,48 @@ def test_broken_retro_stops_pending_and_check(tmp_path, capsys, monkeypatch):
     assert pending(tmp_path, capsys, monkeypatch) == (1, "", "2026-11-14-checkers: retro.yaml: title: missing\n")
     assert run(capsys, "--config", str(tmp_path / "config.yaml"), "check") == (
         1, "", "2026-11-14-checkers: retro.yaml: title: missing\n")
+
+
+def planned_retro(tmp_path, findings):
+    """A retro under retros with a roadmap of F1.1 (done), F1.2 (building) and F1.3 (no feature.yaml yet)."""
+    config(tmp_path)
+    folder = retro_folder(tmp_path / "retros", findings=findings)
+    (folder / "roadmap.yaml").write_text(yaml.safe_dump(
+        {"milestones": [{"id": "M1", "features": [{"id": "F1.1"}, {"id": "F1.2"}, {"id": "F1.3"}]}]}))
+    for fid, status in (("F1.1", "done"), ("F1.2", "building")):
+        feature = folder / "features" / f"{fid}-x" / "feature.yaml"
+        feature.parent.mkdir(parents=True)
+        feature.write_text(yaml.safe_dump({"roadmap": fid, "status": status}))
+    return folder
+
+
+FIVE = [finding(1, feature="F1.1"), finding(2, feature="F1.2"), finding(3, feature="F1.3"), finding(4),
+        finding(5, wontfix="rare")]
+
+
+def test_finding_status_from_roadmap(tmp_path, capsys):
+    planned_retro(tmp_path, FIVE)
+    assert run(capsys, "--config", str(tmp_path / "config.yaml"), "check", "--all") == (0, """\
+2026-11-14-checkers #1 fixed: a hook runs it (F1.1)
+2026-11-14-checkers #2 planned: a hook runs it (F1.2)
+2026-11-14-checkers #3 planned: a hook runs it (F1.3)
+2026-11-14-checkers #4 open: a hook runs it
+2026-11-14-checkers #5 wontfix: a hook runs it. Won't fix: rare
+3 to do; 1 fixed, 1 won't fix
+""", "")
+
+
+def test_finding_feature_not_in_roadmap(tmp_path, capsys):
+    planned_retro(tmp_path, [finding(1, feature="F9.9")])
+    assert run(capsys, "--config", str(tmp_path / "config.yaml"), "check") == (
+        1, "", "2026-11-14-checkers: findings[1]: F9.9 is not in roadmap.yaml\n")
+
+
+def test_check_lists_to_do(tmp_path, capsys):
+    planned_retro(tmp_path, FIVE)
+    assert run(capsys, "--config", str(tmp_path / "config.yaml"), "check") == (0, """\
+2026-11-14-checkers #2 planned: a hook runs it (F1.2)
+2026-11-14-checkers #3 planned: a hook runs it (F1.3)
+2026-11-14-checkers #4 open: a hook runs it
+3 to do; 1 fixed, 1 won't fix
+""", "")

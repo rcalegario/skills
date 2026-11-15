@@ -449,6 +449,46 @@ def pending_logs(cfg, retros):
     return sorted(logs, key=lambda log: log.stat().st_mtime)
 
 
+def finding_statuses(folder, findings):
+    """Each finding's status, read from the retro's roadmap.yaml and the feature.yaml files under features/:
+    wontfix, open (no feature), fixed (its feature is done) or planned."""
+    errors = []
+    roadmap = _load(folder / "roadmap.yaml", errors) if (folder / "roadmap.yaml").is_file() else {}
+    listed = {f.get("id") for m in (roadmap or {}).get("milestones") or [] for f in m.get("features") or []}
+    done = set()
+    for path in folder.glob("features/*/feature.yaml"):
+        feature = yaml.safe_load(path.read_text())
+        if isinstance(feature, dict) and feature.get("status") == "done":
+            done.add(feature.get("roadmap"))
+    statuses = []
+    for f in findings:
+        if "wontfix" in f:
+            statuses.append("wontfix")
+        elif "feature" not in f:
+            statuses.append("open")
+        elif f["feature"] in done:
+            statuses.append("fixed")
+        else:
+            statuses.append("planned")
+            if f["feature"] not in listed:
+                errors.append(f"findings[{f['id']}]: {f['feature']} is not in roadmap.yaml")
+    return statuses, errors
+
+
+def check(retros, show_all):
+    """Lines for the findings still to do (every finding with show_all) and a closing count; and the errors."""
+    lines, errors, count = [], [], Counter()
+    for folder, retro in retros:
+        statuses, problems = finding_statuses(folder, retro["findings"])
+        errors += [f"{folder.name}: {e}" for e in problems]
+        for f, status in zip(retro["findings"], statuses):
+            count[status] += 1
+            if show_all or status in ("open", "planned"):
+                lines.append(f"{folder.name} #{f['id']} {status}: {_fix(f)}")
+    lines.append(f"{count['open'] + count['planned']} to do; {count['fixed']} fixed, {count['wontfix']} won't fix")
+    return lines, errors
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, default=Path(__file__).resolve().parent.parent / "config.yaml",
@@ -481,8 +521,15 @@ def main(argv=None):
         if errors or more:
             return 1
         if args.cmd == "pending":
-            for log in pending_logs(cfg, retros):
-                print(log)
+            lines = [str(log) for log in pending_logs(cfg, retros)]
+        else:
+            lines, errors = check(retros, args.all)
+            for e in errors:
+                print(e, file=sys.stderr)
+            if errors:
+                return 1
+        for line in lines:
+            print(line)
         return 0
     retro, digests, errors = read_retro(args.folder)
     for e in errors:
