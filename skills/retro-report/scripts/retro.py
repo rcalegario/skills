@@ -2,7 +2,11 @@
 
   retro.py digest <session.jsonl>...   each session's calls, failures, repeats and cost, as a YAML list
   retro.py render <retro-folder>       write its retro.md from the two yaml files
+  retro.py pending                     the session logs no retro has read
+  retro.py check [--all]               the findings of every retro still to fix
   retro.py validate <retro-folder>     check its retro.yaml, and that sessions.yaml digests each session it names
+
+pending and check read config.yaml beside this skill's SKILL.md (see config.example.yaml), or --config.
 """
 import argparse
 import json
@@ -401,8 +405,26 @@ def report(retro, digests):
     return "\n".join(lines) + "\n"
 
 
+def load_config(path):
+    """retros and projects from config.yaml, ~ expanded, with one line per problem."""
+    errors = []
+    cfg = _load(path, errors)
+    if not errors:
+        if not isinstance(cfg, dict):
+            errors.append("must be a mapping")
+        else:
+            _field(cfg, "retros", _is_text, "must be a path", errors)
+            _field(cfg, "projects", lambda v: _is_text_list(v) and v, "must be a list of paths", errors)
+    if errors:
+        return None, [f"{path}: {e.removeprefix(path.name + ': ')}; see config.example.yaml" for e in errors]
+    return {"retros": Path(cfg["retros"]).expanduser(),
+            "projects": [Path(p).expanduser() for p in cfg["projects"]]}, []
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--config", type=Path, default=Path(__file__).resolve().parent.parent / "config.yaml",
+                        help="config.yaml to read (default: the one beside SKILL.md)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("digest", help="digest Claude Code session logs, in the order given")
     d.add_argument("logs", nargs="+")
@@ -410,6 +432,9 @@ def main(argv=None):
     v.add_argument("folder")
     r = sub.add_parser("render", help="write a valid retro folder's retro.md")
     r.add_argument("folder")
+    sub.add_parser("pending", help="list the session logs no retro has read, oldest first")
+    c = sub.add_parser("check", help="list the findings of every retro still to fix")
+    c.add_argument("--all", action="store_true", help="also list the fixed and wontfix findings")
     args = parser.parse_args(argv)
 
     if args.cmd == "digest":
@@ -420,6 +445,11 @@ def main(argv=None):
             return 1
         print(yaml.safe_dump(result, sort_keys=False, allow_unicode=True, width=200), end="")
         return 0
+    if args.cmd in ("pending", "check"):
+        cfg, errors = load_config(args.config)
+        for e in errors:
+            print(e, file=sys.stderr)
+        return 1 if errors else 0
     retro, digests, errors = read_retro(args.folder)
     for e in errors:
         print(e, file=sys.stderr)

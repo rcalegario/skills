@@ -358,3 +358,23 @@ def test_render_leaves_out_empty_decisions(tmp_path, capsys):
     folder = retro_folder(tmp_path, decisions=[])
     assert run(capsys, "render", str(folder))[0] == 0
     assert "## Decisions" not in (folder / "retro.md").read_text()
+
+
+def config(tmp_path, **cfg):
+    """A config.yaml with a retros folder and one project, changed by cfg (None drops a key)."""
+    data = {"retros": str(tmp_path / "retros"), "projects": ["/work/repo"], "threshold": 10, **cfg}
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({k: v for k, v in data.items() if v is not None}))
+    (tmp_path / "retros").mkdir(exist_ok=True)
+    return path
+
+
+def test_config_missing_or_wrong(tmp_path, capsys):
+    missing = tmp_path / "none.yaml"
+    for cmd in ("pending", "check"):
+        assert run(capsys, "--config", str(missing), cmd) == (1, "", f"{missing}: missing; see config.example.yaml\n")
+    path = config(tmp_path, retros=None, projects="/work/repo")
+    assert run(capsys, "--config", str(path), "pending")[2].splitlines() == [
+        f"{path}: retros: missing; see config.example.yaml",
+        f"{path}: projects: must be a list of paths; see config.example.yaml"]
+    assert run(capsys, "--config", str(config(tmp_path)), "check")[0] == 0

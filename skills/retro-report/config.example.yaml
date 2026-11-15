@@ -1,0 +1,8 @@
+# Copy to config.yaml (gitignored) and adjust.
+# retros: the folder holding one folder per retro.
+retros: ~/Projects/home/retros
+# projects: the folders whose Claude Code sessions a retro reads; each covers its subfolders (task worktrees).
+projects:
+  - ~/Projects/home
+# threshold: pending sessions that make the band offer a retro.
+threshold: 10
