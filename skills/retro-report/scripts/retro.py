@@ -10,6 +10,7 @@ pending and check read config.yaml beside this skill's SKILL.md (see config.exam
 """
 import argparse
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -421,6 +422,33 @@ def load_config(path):
             "projects": [Path(p).expanduser() for p in cfg["projects"]]}, []
 
 
+def read_retros(cfg):
+    """Every retro folder under retros, parsed; its validate errors prefixed by the folder name."""
+    retros, errors = [], []
+    for folder in sorted(p.parent for p in cfg["retros"].glob("*/retro.yaml")):
+        retro, _, problems = read_retro(folder)
+        errors += [f"{folder.name}: {e}" for e in problems]
+        retros.append((folder, retro))
+    return retros, errors
+
+
+def session_folder(project):
+    """The folder Claude Code keeps a project's session logs in: its path with each non-alphanumeric as '-'."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(project))
+
+
+def pending_logs(cfg, retros):
+    """Top-level session logs of the configured projects and their subfolders, oldest first, minus the sessions
+    a retro names and the session in progress."""
+    used = {s for _, retro in retros for s in retro["sources"]["sessions"]}
+    used.add(os.environ.get("CLAUDE_CODE_SESSION_ID"))
+    names = [session_folder(p) for p in cfg["projects"]]
+    folders = [f for f in (Path.home() / ".claude" / "projects").glob("*")
+               if any(f.name == n or f.name.startswith(n + "-") for n in names)]
+    logs = [log for f in folders for log in f.glob("*.jsonl") if log.stem not in used]
+    return sorted(logs, key=lambda log: log.stat().st_mtime)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, default=Path(__file__).resolve().parent.parent / "config.yaml",
@@ -447,9 +475,15 @@ def main(argv=None):
         return 0
     if args.cmd in ("pending", "check"):
         cfg, errors = load_config(args.config)
-        for e in errors:
+        retros, more = read_retros(cfg) if cfg else ([], [])
+        for e in errors + more:
             print(e, file=sys.stderr)
-        return 1 if errors else 0
+        if errors or more:
+            return 1
+        if args.cmd == "pending":
+            for log in pending_logs(cfg, retros):
+                print(log)
+        return 0
     retro, digests, errors = read_retro(args.folder)
     for e in errors:
         print(e, file=sys.stderr)

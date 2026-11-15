@@ -2,6 +2,7 @@
 import datetime
 import json
 import os
+import re
 import sys
 
 import yaml
@@ -378,3 +379,52 @@ def test_config_missing_or_wrong(tmp_path, capsys):
         f"{path}: retros: missing; see config.example.yaml",
         f"{path}: projects: must be a list of paths; see config.example.yaml"]
     assert run(capsys, "--config", str(config(tmp_path)), "check")[0] == 0
+
+
+def session_log(home, folder, sid, mtime):
+    path = home / ".claude" / "projects" / folder / f"{sid}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}\n")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def pending(tmp_path, capsys, monkeypatch, current=None):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    if current:
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", current)
+    else:
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    return run(capsys, "--config", str(tmp_path / "config.yaml"), "pending")
+
+
+def test_pending_lists_project_sessions(tmp_path, capsys, monkeypatch):
+    config(tmp_path, projects=["/work/repo", "~/notes"])
+    home = tmp_path / "home"
+    a = session_log(home, "-work-repo", "a", 300)
+    b = session_log(home, "-work-repo", "b", 100)
+    c = session_log(home, "-work-repo-tasks-x-repos-y", "c", 200)
+    d = session_log(home, re.sub(r"[^A-Za-z0-9]", "-", str(home / "notes")), "d", 400)  # Claude Code's naming
+    session_log(home, "-work-repository", "e", 50)
+    session_log(home, "-work-other", "f", 50)
+    session_log(home, "-work-repo/a/subagents", "agent-1", 50)
+    assert pending(tmp_path, capsys, monkeypatch) == (0, f"{b}\n{c}\n{a}\n{d}\n", "")
+
+
+def test_pending_leaves_out_used_and_current(tmp_path, capsys, monkeypatch):
+    config(tmp_path)
+    retro_folder(tmp_path / "retros")                       # its sources name s-1
+    home = tmp_path / "home"
+    for n, sid in enumerate(["s-1", "s-2", "s-3"]):
+        session_log(home, "-work-repo", sid, 100 + n)
+    assert pending(tmp_path, capsys, monkeypatch, current="s-3") == (
+        0, f"{home / '.claude/projects/-work-repo/s-2.jsonl'}\n", "")
+
+
+def test_broken_retro_stops_pending_and_check(tmp_path, capsys, monkeypatch):
+    config(tmp_path)
+    retro_folder(tmp_path / "retros", drop=["title"])
+    session_log(tmp_path / "home", "-work-repo", "s-2", 100)
+    assert pending(tmp_path, capsys, monkeypatch) == (1, "", "2026-11-14-checkers: retro.yaml: title: missing\n")
+    assert run(capsys, "--config", str(tmp_path / "config.yaml"), "check") == (
+        1, "", "2026-11-14-checkers: retro.yaml: title: missing\n")
