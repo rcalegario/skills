@@ -364,6 +364,12 @@ def test_render_leaves_out_empty_decisions(tmp_path, capsys):
     assert "## Decisions" not in (folder / "retro.md").read_text()
 
 
+def test_render_strips_folded_decisions(tmp_path, capsys):
+    folder = retro_folder(tmp_path, decisions=["First, folded.\n", "Second."], findings=[finding(1)])
+    assert run(capsys, "render", str(folder))[0] == 0
+    assert "- First, folded.\n- Second.\n" in (folder / "retro.md").read_text()
+
+
 def config(tmp_path, **cfg):
     """A config.yaml with a retros folder and one project, changed by cfg (None drops a key)."""
     data = {"retros": str(tmp_path / "retros"), "projects": ["/work/repo"], "threshold": 10, **cfg}

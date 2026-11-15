@@ -413,7 +413,7 @@ def report(retro, digests, statuses):
     lines += [_row([f["id"], CATEGORIES[f["category"]], f["what"], _fix(f), status])
               for f, status in zip(retro["findings"], statuses)]
     if retro["decisions"]:
-        lines += ["", "## Decisions", ""] + [f"- {d}" for d in retro["decisions"]]
+        lines += ["", "## Decisions", ""] + [f"- {d.strip()}" for d in retro["decisions"]]
     lines += ["", "## Sessions", "", "| Session | Project | Minutes | Calls | Failures | Search streaks | Cost |",
               "|---|---|---|---|---|---|---|"] + [_session_row(d) for d in digests]
     if "outcome" in retro:
