@@ -1,0 +1,7 @@
+#!/bin/sh
+# Runs the skill's tests before every commit. Enable per clone: see SETUP.md.
+# The tests run git in temp repos: drop the commit's GIT_INDEX_FILE so they don't write into it.
+if ! out=$(env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts 2>&1); then
+  printf 'pre-commit: scripts tests failed\n%s\n' "$out" >&2
+  exit 1
+fi
