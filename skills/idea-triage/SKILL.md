@@ -6,7 +6,7 @@ argument-hint: ficha [repo] | triage [idea]
 
 # idea-triage
 
-`<home>` is `realpath <skill-dir>/../..`: this skill lives in `<home>/skills/idea-triage`, reached through a symlink. The catalog is `<home>/catalog/`: the schema `project.schema.json` (the only source of fields, enums and patterns), the checker `catalog.py`, run as `uv run <home>/catalog/catalog.py validate|index`, and the generated `index.yaml`.
+`<home>` is the `home:` value in `<skill-dir>/config.yaml` (expand `~`). When the file is missing, ask the user for the path of their home repo and write it there; `config.example.yaml` shows the format. The catalog is `<home>/catalog/`: the schema `project.schema.json` (the only source of fields, enums and patterns), the checker `catalog.py`, run as `uv run <home>/catalog/catalog.py validate|index`, and the generated `index.yaml`.
 
 Free-text values (a ficha's `question`, `features`, `notes`; a triage record's text) are in Portuguese; `entities` are English nouns (`account`, `transaction`); ids and enum values stay as the schema has them.
 
