@@ -21,10 +21,16 @@ Steps for a fresh clone or a new machine. Each one can run again on a machine al
    cp -n ~/Projects/skills/skills/task/config.example.yaml ~/Projects/skills/skills/task/config.yaml
    ```
 
-4. Enable the pre-commit hook. It checks `skills.yaml` and runs the tests of the repo scripts and of each skill a commit touches (each skill's command is its `test:` in `skills.yaml`). It needs [uv](https://docs.astral.sh/uv/) and `python3`:
+4. Create the personal settings of `retro-report` (gitignored; edit `retros` and `projects` if your retros and projects are elsewhere):
+
+   ```sh
+   cp -n ~/Projects/skills/skills/retro-report/config.example.yaml ~/Projects/skills/skills/retro-report/config.yaml
+   ```
+
+5. Enable the pre-commit hook. It checks `skills.yaml` and runs the tests of the repo scripts and of each skill a commit touches (each skill's command is its `test:` in `skills.yaml`). It needs [uv](https://docs.astral.sh/uv/) and `python3`:
 
    ```sh
    git -C ~/Projects/skills config core.hooksPath .githooks
    ```
 
-The five skills are linked straight to this repo. If skills-manager ever lists one of them (`flow`, `task`, `spec-lite`, `tlc-spec-driven`, `idea-triage`), remove it from the manager: it would replace the links with its own copy.
+The six skills are linked straight to this repo. If skills-manager ever lists one of them (`flow`, `task`, `spec-lite`, `tlc-spec-driven`, `idea-triage`, `retro-report`), remove it from the manager: it would replace the links with its own copy.
