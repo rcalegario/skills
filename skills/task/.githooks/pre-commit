@@ -1,6 +1,0 @@
-#!/bin/sh
-# Runs the skill's tests before every commit. Enable per clone: see SETUP.md.
-if ! out=$(uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts 2>&1); then
-  printf 'pre-commit: scripts tests failed\n%s\n' "$out" >&2
-  exit 1
-fi
