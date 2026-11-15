@@ -391,12 +391,14 @@ def _session_row(d):
                  f"${cost:.2f}" if cost is not None else "-"])
 
 
-def report(retro, digests):
-    """retro.md for a valid retro: Source, Findings, Decisions, Sessions and, when written, Outcome."""
+def report(retro, digests, statuses):
+    """retro.md for a valid retro: Source, Findings with their statuses, Decisions, Sessions and, when written,
+    Outcome."""
     lines = [GENERATED_NOTE, f"# Retro {retro['date']}: {retro['title']}", "",
              f"Source: {retro['summary'].strip()}", "", "## Findings", "",
-             "| # | Category | What happened | Fix |", "|---|---|---|---|"]
-    lines += [_row([f["id"], CATEGORIES[f["category"]], f["what"], _fix(f)]) for f in retro["findings"]]
+             "| # | Category | What happened | Fix | Status |", "|---|---|---|---|---|"]
+    lines += [_row([f["id"], CATEGORIES[f["category"]], f["what"], _fix(f), status])
+              for f, status in zip(retro["findings"], statuses)]
     if retro["decisions"]:
         lines += ["", "## Decisions", ""] + [f"- {d}" for d in retro["decisions"]]
     lines += ["", "## Sessions", "", "| Session | Project | Minutes | Calls | Failures | Search streaks | Cost |",
@@ -540,7 +542,12 @@ def main(argv=None):
         print(f"{args.folder} OK")
         return 0
     folder = Path(args.folder)
-    (folder / "retro.md").write_text(report(retro, digests))
+    statuses, errors = finding_statuses(folder, retro["findings"])
+    for e in errors:
+        print(e, file=sys.stderr)
+    if errors:
+        return 1
+    (folder / "retro.md").write_text(report(retro, digests, statuses))
     print(f"wrote {folder / 'retro.md'}")
     return 0
 
