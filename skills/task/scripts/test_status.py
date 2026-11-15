@@ -325,3 +325,31 @@ def test_find_skips_the_checks(task, capsys):
 def test_find_unknown_id_fails(task, capsys):
     assert run(task, "--find", "D-99") == 1
     assert capsys.readouterr().out.strip() == "D-99 is not defined"
+
+
+MAIN_README = README.replace("    branch: feat/metrics-base-image\n", "    branch: feat/metrics-base-image\n    main: true\n")
+
+
+def test_legacy_readme_without_main_only_warns(task):
+    write(task, "README.md", README)
+    t = loaded(task)
+    assert not t.failures
+    assert any("no main repo" in w for w in t.warnings)
+
+
+def test_main_repo_must_be_one_and_name_the_parent_folder(tmp_path):
+    root = tmp_path / "iac" / "2026-11-15-1430-metrics-base-image"
+    write(root, "README.md", MAIN_README)
+    assert not loaded(root).failures
+    wrong = tmp_path / "other" / "2026-11-15-1430-metrics-base-image"
+    write(wrong, "README.md", MAIN_README)
+    assert any("main repo 'iac'" in f for f in loaded(wrong).failures)
+    two = MAIN_README.replace("---\n\n#", "  - name: api\n    origin: ~/projects/api\n    worktree: null\n    main: true\n---\n\n#")
+    write(root, "README.md", two)
+    assert any("exactly one main repo" in f for f in loaded(root).failures)
+
+
+def test_dated_folder_name_is_checked(tmp_path):
+    root = tmp_path / "iac" / "metrics-base-image"
+    write(root, "README.md", MAIN_README)
+    assert any("YYYY-MM-DD-HHMM-<slug>" in f for f in loaded(root).failures)

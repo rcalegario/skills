@@ -125,6 +125,31 @@ class Task:
         self.check_references()
         self.build_tree()
         self.check_links()
+        self.check_layout()
+
+    def check_layout(self):
+        """Tasks live in <home>/tasks/<main repo>/<YYYY-MM-DD-HHMM>-<slug>/. A README without `main` is the old layout: warn only."""
+        path = self.path("README.md")
+        if not os.path.isfile(path):
+            return
+        fm, _ = frontmatter(path)
+        repos = [r for r in lst(fm.get("repos")) if isinstance(r, dict)]
+        if not repos:
+            return
+        mains = [str(r.get("name")) for r in repos if r.get("main")]
+        if not mains:
+            self.warnings.append("README: no main repo (old layout); mark one repo with `main: true`")
+            return
+        if len(mains) != 1:
+            self.fail("README: exactly one main repo, found %d (%s)" % (len(mains), ", ".join(mains)))
+            return
+        root = os.path.abspath(self.root)
+        folder = os.path.basename(root)
+        parent = os.path.basename(os.path.dirname(root))
+        if not re.match(r"^\d{4}-\d{2}-\d{2}-\d{4}-[a-z0-9]+(-[a-z0-9]+)*$", folder):
+            self.fail("folder %r must be named YYYY-MM-DD-HHMM-<slug>" % folder)
+        if parent != mains[0]:
+            self.fail("folder sits under %r but the main repo %r must be its parent" % (parent, mains[0]))
 
     def check_shapes(self):
         for d, dec in self.decisions.items():

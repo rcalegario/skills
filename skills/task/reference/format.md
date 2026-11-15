@@ -1,12 +1,12 @@
 # Task folder format
 
-A task folder records the facts, decisions, plan and proof behind one piece of work. It lives in `<home>/tasks/<slug>/`. Templates for every file are in `../templates/`. Write in English; code, paths and names in backticks; dates `YYYY-MM-DD`; titles in YAML between quotes.
+A task folder records the facts, decisions, plan and proof behind one piece of work. It lives in `<home>/tasks/<main-repo>/<YYYY-MM-DD-HHMM>-<slug>/`: the first level is the task's main repo, the name carries the start time (see the task `SKILL.md`). Templates for every file are in `../templates/`. Write in English; code, paths and names in backticks; dates `YYYY-MM-DD`; titles in YAML between quotes.
 
 ## Files
 
 | Path | Format | Holds |
 |---|---|---|
-| `README.md` | md + YAML header | the base text verbatim (with its link), the problem, who it serves, what stays out. Header: `id`, `title`, `link`, `repos:` |
+| `README.md` | md + YAML header | the base text verbatim (with its link), the problem, who it serves, what stays out. Header: `id` (the folder name), `title`, `link`, `repos:` (exactly one with `main: true`) |
 | `acs.yaml` | YAML | outcomes (`AC-n`) and extras (`X-n`), each split into requirements |
 | `context/*.md` | md + YAML header | facts only, each file with its `code` and the date it was read |
 | `context/archive/` | any | frozen old material, read only, never checked |
