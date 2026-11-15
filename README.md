@@ -27,13 +27,13 @@ What each skill is built from. Edit `skills.yaml`, then run `python scripts/skil
 
 - derived from [tlc-spec-driven](skills/tlc-spec-driven) - Criteria proved by checks, with every gate enforced by a tested script
 - derived from [spec-lite](skills/spec-lite) - YAML state for roadmap and features, changed only through the script
-- inspired by [humanlayer/skills · show-me](https://github.com/humanlayer/skills/tree/HEAD/plugins/show-me/skills/show-me) (MIT, commit unknown) - Shapes, flows and changes shown as visuals in the docs people read
+- inspired by [humanlayer/skills · show-me](https://github.com/humanlayer/skills/tree/4d69d20f6e9b/plugins/show-me/skills/show-me) (MIT, `4d69d20f6e9b`) - Shapes, flows and changes shown as visuals in the docs people read
 
 ### task
 
-- inspired by [mattpocock/skills · grilling](https://github.com/mattpocock/skills/tree/HEAD/skills/productivity/grilling) (commit unknown) - Decisions asked in rounds over a design tree, each with a recommended answer
-- inspired by [mattpocock/skills · to-spec](https://github.com/mattpocock/skills/tree/HEAD/skills/engineering/to-spec) (commit unknown) - Turning a base text into outcomes and requirements before any code
-- inspired by [mattpocock/skills · to-tickets](https://github.com/mattpocock/skills/tree/HEAD/skills/engineering/to-tickets) (commit unknown) - Splitting the work into slices that each ship on their own
+- inspired by [mattpocock/skills · grilling](https://github.com/mattpocock/skills/tree/95249b0b4978/skills/productivity/grilling) (`95249b0b4978`) - Decisions asked in rounds over a design tree, each with a recommended answer
+- inspired by [mattpocock/skills · to-spec](https://github.com/mattpocock/skills/tree/5c89081d4bbe/skills/engineering/to-spec) (`5c89081d4bbe`) - Turning a base text into outcomes and requirements before any code
+- inspired by [mattpocock/skills · to-tickets](https://github.com/mattpocock/skills/tree/9e2abf8611a3/skills/engineering/to-tickets) (`9e2abf8611a3`) - Splitting the work into slices that each ship on their own
 
 ### spec-lite
 
@@ -42,7 +42,7 @@ What each skill is built from. Edit `skills.yaml`, then run `python scripts/skil
 ### tlc-spec-driven
 
 - fork of [tech-leads-club/agent-skills · tlc-spec-driven](https://github.com/tech-leads-club/agent-skills/tree/8658b66/packages/skills-catalog/skills/%28development%29/tlc-spec-driven) (CC-BY-4.0, `8658b66`) - The whole skill at upstream 4.1.0; local changes are listed in its MODS.md
-- inspired by [humanlayer/skills · show-me](https://github.com/humanlayer/skills/tree/HEAD/plugins/show-me/skills/show-me) (MIT, commit unknown) - A copy of show-me in references/show-me.md, credited in its header
+- derived from [humanlayer/skills · show-me](https://github.com/humanlayer/skills/tree/4d69d20f6e9b/plugins/show-me/skills/show-me) (MIT, `4d69d20f6e9b`) - A copy of show-me in references/show-me.md, credited in its header
 
 ### idea-triage
 

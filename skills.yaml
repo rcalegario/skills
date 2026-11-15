@@ -15,7 +15,7 @@ own:
         took: YAML state for roadmap and features, changed only through the script
       - repo: https://github.com/humanlayer/skills
         path: plugins/show-me/skills/show-me
-        commit: unknown
+        commit: 4d69d20f6e9b
         license: MIT
         relation: inspired
         took: Shapes, flows and changes shown as visuals in the docs people read
@@ -25,17 +25,17 @@ own:
     references:
       - repo: https://github.com/mattpocock/skills
         path: skills/productivity/grilling
-        commit: unknown
+        commit: 95249b0b4978
         relation: inspired
         took: Decisions asked in rounds over a design tree, each with a recommended answer
       - repo: https://github.com/mattpocock/skills
         path: skills/engineering/to-spec
-        commit: unknown
+        commit: 5c89081d4bbe
         relation: inspired
         took: Turning a base text into outcomes and requirements before any code
       - repo: https://github.com/mattpocock/skills
         path: skills/engineering/to-tickets
-        commit: unknown
+        commit: 9e2abf8611a3
         relation: inspired
         took: Splitting the work into slices that each ship on their own
 
@@ -57,9 +57,9 @@ own:
         took: The whole skill at upstream 4.1.0; local changes are listed in its MODS.md
       - repo: https://github.com/humanlayer/skills
         path: plugins/show-me/skills/show-me
-        commit: unknown
+        commit: 4d69d20f6e9b
         license: MIT
-        relation: inspired
+        relation: derived
         took: A copy of show-me in references/show-me.md, credited in its header
 
   - name: idea-triage
