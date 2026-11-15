@@ -484,6 +484,20 @@ def test_check_lists_to_do(tmp_path, capsys):
 """, "")
 
 
+def test_check_one_retro(tmp_path, capsys):
+    folder = planned_retro(tmp_path, FIVE)
+    other = tmp_path / "retros" / "2026-11-20-other"
+    other.mkdir()
+    (other / "retro.yaml").write_text("broken: [")          # another retro, even a broken one, stays out
+    assert run(capsys, "check", str(folder)) == (0, """\
+2026-11-14-checkers #2 planned: a hook runs it (F1.2)
+2026-11-14-checkers #3 planned: a hook runs it (F1.3)
+2026-11-14-checkers #4 open: a hook runs it
+3 to do; 1 fixed, 1 won't fix
+""", "")
+    assert run(capsys, "check", str(other))[0] == 1
+
+
 def test_render_refuses_feature_not_in_roadmap(tmp_path, capsys):
     folder = retro_folder(tmp_path)                         # its finding names F1.1, and it has no roadmap
     assert run(capsys, "render", str(folder)) == (1, "", "findings[1]: F1.1 is not in roadmap.yaml\n")

@@ -3,10 +3,10 @@
   retro.py digest <session.jsonl>...   each session's calls, failures, repeats and cost, as a YAML list
   retro.py render <retro-folder>       write its retro.md from the two yaml files
   retro.py pending                     the session logs no retro has read
-  retro.py check [--all]               the findings of every retro still to fix
+  retro.py check [--all] [folder]      the findings still to fix, of every retro or of that folder only
   retro.py validate <retro-folder>     check its retro.yaml, and that sessions.yaml digests each session it names
 
-pending and check read config.yaml beside this skill's SKILL.md (see config.example.yaml), or --config.
+pending, and check without a folder, read config.yaml beside this skill's SKILL.md (see config.example.yaml), or --config.
 """
 import argparse
 import json
@@ -522,6 +522,7 @@ def main(argv=None):
     r.add_argument("folder")
     sub.add_parser("pending", help="list the session logs no retro has read, oldest first")
     c = sub.add_parser("check", help="list the findings of every retro still to fix")
+    c.add_argument("folder", nargs="?", help="check this retro folder only (no config needed)")
     c.add_argument("--all", action="store_true", help="also list the fixed and wontfix findings")
     args = parser.parse_args(argv)
 
@@ -532,6 +533,13 @@ def main(argv=None):
             print(f"{e} is not a Claude Code session log", file=sys.stderr)
             return 1
         print(yaml.safe_dump(result, sort_keys=False, allow_unicode=True, width=200), end="")
+        return 0
+    if args.cmd == "check" and args.folder:
+        retro, _, errors = read_retro(args.folder)
+        lines, problems = check([(Path(args.folder), retro)], args.all) if not errors else ([], [])
+        if _fail(errors + problems):
+            return 1
+        print("\n".join(lines))
         return 0
     if args.cmd in ("pending", "check"):
         cfg, errors = load_config(args.config)
