@@ -49,3 +49,7 @@ What each skill is built from. Edit `skills.yaml`, then run `python scripts/skil
 - No outside references.
 
 <!-- credits:end -->
+
+## License
+
+MIT (see `LICENSE`), except `skills/tlc-spec-driven`, a fork that stays under CC-BY-4.0 with attribution (see Credits and its `MODS.md`).
