@@ -263,3 +263,11 @@ def test_installed_duplicate_or_own_name_fails(tmp_path, block, culprit):
     out = run(root, "validate")
     assert out.returncode == 1, out.stdout
     assert culprit in out.stdout
+
+
+def test_hidden_folder_is_not_a_skill(tmp_path):
+    root = make_repo(tmp_path)
+    (root / "skills" / ".pytest_cache").mkdir()
+    write_credits(root)
+    out = run(root, "validate")
+    assert out.returncode == 0, out.stdout + out.stderr

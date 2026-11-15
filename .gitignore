@@ -2,3 +2,4 @@
 __pycache__/
 skills/task/config.yaml
 skills/idea-triage/config.yaml
+.pytest_cache/
