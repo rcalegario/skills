@@ -270,19 +270,38 @@ def _load(path, errors):
         return None
 
 
-def finding_errors(findings):
+def _twice(ids):
+    """The ids that appear more than once, in order of their first repeat."""
+    seen, out = set(), []
+    for i in ids:
+        if i in seen and i not in out:
+            out.append(i)
+        seen.add(i)
+    return out
+
+
+def _sources(retro):
+    """The session ids a retro names, or None when they are unusable."""
+    src = retro.get("sources") if isinstance(retro, dict) else None
+    named = src.get("sessions") if isinstance(src, dict) else None
+    return named if _is_text_list(named) and named else None
+
+
+def finding_errors(findings, named):
     """Each finding's problems, the finding named by its id, or by #position when its id is unusable."""
-    errors, seen = [], set()
+    errors, ids = [], set()
     for pos, f in enumerate(findings, 1):
         if not isinstance(f, dict):
             errors.append(f"findings[#{pos}]: must be a mapping")
             continue
-        name = f"findings[{f['id']}]" if _is_id(f.get("id")) else f"findings[#{pos}]"
-        if _is_id(f.get("id")) and f["id"] in seen:
+        fid = f.get("id")
+        name = f"findings[{fid}]" if _is_id(fid) else f"findings[#{pos}]"
+        if _is_id(fid) and fid in ids:
             errors.append(f"{name}.id: used twice")
         else:
             _field(f, "id", _is_id, "must be an integer", errors, f"{name}.id")
-        seen.add(f.get("id"))
+        if _is_id(fid):
+            ids.add(fid)
         _field(f, "category", lambda v: v in CATEGORIES,
                f"{f.get('category')!r} is not one of {', '.join(CATEGORIES)}", errors, f"{name}.category")
         for key in ("what", "fix"):
@@ -290,6 +309,8 @@ def finding_errors(findings):
         for key in ("feature", "wontfix"):
             _field(f, key, _is_text, "must be text", errors, f"{name}.{key}", required=False)
         _field(f, "sessions", _is_text_list, "must be a list of text", errors, f"{name}.sessions", required=False)
+        if named is not None and _is_text_list(f.get("sessions")):
+            errors += [f"{name}.sessions: {s} is not in sources.sessions" for s in f["sessions"] if s not in named]
         if "feature" in f and "wontfix" in f:
             errors.append(f"{name}: feature and wontfix are exclusive")
     return errors
@@ -300,41 +321,47 @@ def retro_errors(retro):
     if not isinstance(retro, dict):
         return ["must be a mapping"]
     errors = []
-    _field(retro, "date", lambda v: isinstance(v, date), "must be a date (YYYY-MM-DD)", errors)
+    _field(retro, "date", lambda v: isinstance(v, date) and not isinstance(v, datetime),
+           "must be a date (YYYY-MM-DD)", errors)
     for key in ("title", "summary"):
         _field(retro, key, _is_text, "must be text", errors)
     _field(retro, "sources", lambda v: isinstance(v, dict), "must be a mapping", errors)
     if isinstance(retro.get("sources"), dict):
         _field(retro["sources"], "sessions", lambda v: _is_text_list(v) and v, "must be a list of session ids",
                errors, "sources.sessions")
+    named = _sources(retro)
+    errors += [f"sources.sessions: {s} named twice" for s in _twice(named or [])]
     _field(retro, "findings", lambda v: isinstance(v, list), "must be a list", errors)
     _field(retro, "decisions", _is_text_list, "must be a list of text", errors)
     _field(retro, "outcome", _is_text, "must be text", errors, required=False)
     if isinstance(retro.get("findings"), list):
-        errors += finding_errors(retro["findings"])
+        errors += finding_errors(retro["findings"], named)
     return errors
 
 
-def validate(folder):
-    """Every problem of a retro folder, one line each; empty when it is valid."""
-    errors = []
-    retro = _load(Path(folder) / "retro.yaml", errors)
-    if errors:
-        return errors
-    errors = [f"retro.yaml: {e}" for e in retro_errors(retro)]
-    sessions = _load(Path(folder) / "sessions.yaml", errors)
-    if errors:
-        return errors
-    return [f"sessions.yaml: {e}" for e in session_errors(retro["sources"]["sessions"], sessions)]
-
-
 def session_errors(named, digests):
-    """Ids named in the sources with no digest, and digests of sessions the sources do not name."""
+    """Sessions digested twice; then, when the sources are usable, ids missing from either side."""
     if not isinstance(digests, list) or not all(isinstance(d, dict) and _is_text(d.get("session")) for d in digests):
         return ["must be a list of digests"]
     digested = [d["session"] for d in digests]
-    return ([f"{s}: named in sources.sessions but not digested" for s in named if s not in digested]
-            + [f"{s}: digested but not in sources.sessions" for s in digested if s not in named])
+    errors = [f"{s}: digested twice" for s in _twice(digested)]
+    if named is not None:
+        errors += ([f"{s}: named in sources.sessions but not digested" for s in named if s not in digested]
+                   + [f"{s}: digested but not in sources.sessions" for s in digested if s not in named])
+    return errors
+
+
+def read_retro(folder):
+    """A retro folder's retro.yaml and sessions.yaml, parsed, with every problem of both, one line each."""
+    errors = []
+    retro = _load(Path(folder) / "retro.yaml", errors)
+    if not errors:
+        errors += [f"retro.yaml: {e}" for e in retro_errors(retro)]
+    loaded = len(errors)
+    digests = _load(Path(folder) / "sessions.yaml", errors)
+    if len(errors) == loaded:
+        errors += [f"sessions.yaml: {e}" for e in session_errors(_sources(retro), digests)]
+    return retro, digests, errors
 
 
 def _cell(text):
@@ -347,7 +374,7 @@ def _row(cells):
 
 def _fix(f):
     if "wontfix" in f:
-        return f"Won't fix: {f['wontfix']}"
+        return f"{f['fix'].strip().rstrip('.')}. Won't fix: {f['wontfix']}"
     return f"{f['fix']} ({f['feature']})" if "feature" in f else f["fix"]
 
 
@@ -360,12 +387,13 @@ def _session_row(d):
 
 
 def report(retro, digests):
-    """retro.md for a valid retro: the 2026-11-14 shape plus a Sessions table."""
+    """retro.md for a valid retro: Source, Findings, Decisions, Sessions and, when written, Outcome."""
     lines = [GENERATED_NOTE, f"# Retro {retro['date']}: {retro['title']}", "",
              f"Source: {retro['summary'].strip()}", "", "## Findings", "",
              "| # | Category | What happened | Fix |", "|---|---|---|---|"]
     lines += [_row([f["id"], CATEGORIES[f["category"]], f["what"], _fix(f)]) for f in retro["findings"]]
-    lines += ["", "## Decisions", ""] + [f"- {d}" for d in retro["decisions"]]
+    if retro["decisions"]:
+        lines += ["", "## Decisions", ""] + [f"- {d}" for d in retro["decisions"]]
     lines += ["", "## Sessions", "", "| Session | Project | Minutes | Calls | Failures | Search streaks | Cost |",
               "|---|---|---|---|---|---|---|"] + [_session_row(d) for d in digests]
     if "outcome" in retro:
@@ -392,7 +420,7 @@ def main(argv=None):
             return 1
         print(yaml.safe_dump(result, sort_keys=False, allow_unicode=True, width=200), end="")
         return 0
-    errors = validate(args.folder)
+    retro, digests, errors = read_retro(args.folder)
     for e in errors:
         print(e, file=sys.stderr)
     if errors:
@@ -401,7 +429,6 @@ def main(argv=None):
         print(f"{args.folder} OK")
         return 0
     folder = Path(args.folder)
-    retro, digests = (yaml.safe_load((folder / name).read_text()) for name in ("retro.yaml", "sessions.yaml"))
     (folder / "retro.md").write_text(report(retro, digests))
     print(f"wrote {folder / 'retro.md'}")
     return 0

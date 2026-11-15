@@ -249,8 +249,9 @@ def test_validate_ok(tmp_path, capsys):
 
 
 def test_validate_missing_and_wrong_types(tmp_path, capsys):
-    folder = retro_folder(tmp_path, drop=["title"], date="soon", summary=3, decisions="none",
-                          findings=[finding(1), finding(1, what=""), finding(None), finding(2, sessions="s-1")])
+    folder = retro_folder(tmp_path, drop=["title"], date=datetime.datetime(2026, 11, 14, 10, 30), summary=3, decisions="none",
+                          findings=[finding(1), finding(1, what=""), finding(None), finding(2, sessions="s-1"),
+                                    finding(3, sessions=[SID, "zzz"])])
     code, out, err = run(capsys, "validate", str(folder))
     assert code == 1
     assert err.splitlines() == [
@@ -262,6 +263,7 @@ def test_validate_missing_and_wrong_types(tmp_path, capsys):
         "retro.yaml: findings[1].what: must be text",
         "retro.yaml: findings[#3].id: must be an integer",
         "retro.yaml: findings[2].sessions: must be a list of text",
+        "retro.yaml: findings[3].sessions: zzz is not in sources.sessions",
     ]
 
     (folder / "retro.yaml").unlink()
@@ -292,10 +294,17 @@ def test_validate_sessions_match(tmp_path, capsys):
     assert err.splitlines() == ["sessions.yaml: s-2: named in sources.sessions but not digested",
                                 "sessions.yaml: s-3: digested but not in sources.sessions"]
 
+    folder = retro_folder(tmp_path, sources={"sessions": [SID, SID]})
+    (folder / "sessions.yaml").write_text(yaml.safe_dump(SESSIONS + SESSIONS))
+    assert run(capsys, "validate", str(folder))[2].splitlines() == [
+        "retro.yaml: sources.sessions: s-1 named twice", "sessions.yaml: s-1: digested twice"]
+
+    folder = retro_folder(tmp_path, drop=["title"])
     (folder / "sessions.yaml").write_text("session: s-1\n")
-    assert run(capsys, "validate", str(folder))[2] == "sessions.yaml: must be a list of digests\n"
+    assert run(capsys, "validate", str(folder))[2].splitlines() == [
+        "retro.yaml: title: missing", "sessions.yaml: must be a list of digests"]
     (folder / "sessions.yaml").unlink()
-    assert run(capsys, "validate", str(folder))[2] == "sessions.yaml: missing\n"
+    assert run(capsys, "validate", str(folder))[2] == "retro.yaml: title: missing\nsessions.yaml: missing\n"
 
 
 def test_render_writes_report(tmp_path, capsys):
@@ -318,7 +327,7 @@ Source: Built a hook.
 | # | Category | What happened | Fix |
 |---|---|---|---|
 | 1 | Automated checks | `python` \\| missing, so it failed. | a hook runs it (F1.1) |
-| 2 | Global AGENTS.md | python is missing | Won't fix: rare |
+| 2 | Global AGENTS.md | python is missing | a hook runs it. Won't fix: rare |
 | 3 | Tool economy | python is missing | a hook runs it |
 
 ## Decisions
@@ -343,3 +352,9 @@ def test_render_refuses_invalid(tmp_path, capsys):
     (folder / "retro.md").write_text("hand-written\n")
     assert run(capsys, "render", str(folder)) == (1, "", "retro.yaml: title: missing\n")
     assert (folder / "retro.md").read_text() == "hand-written\n"
+
+
+def test_render_leaves_out_empty_decisions(tmp_path, capsys):
+    folder = retro_folder(tmp_path, decisions=[])
+    assert run(capsys, "render", str(folder))[0] == 0
+    assert "## Decisions" not in (folder / "retro.md").read_text()
