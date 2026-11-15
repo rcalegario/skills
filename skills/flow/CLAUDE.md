@@ -1,9 +1,8 @@
 # CLAUDE.md (flow)
 
-Own skill, with its own `.git`, living in the skills-manager store; `~/.claude/skills/flow` points here. Edit and commit here.
+Own skill, living in `~/Projects/skills/skills/flow` (the shared repo, see its root CLAUDE.md); `~/.claude/skills/flow` links here. Edit and commit here.
 
-- Works alone in any repo, and inside a `task` folder (`~/.skills-manager/skills/task`) through `--specs`. `task`'s `status.py` reads `feature.yaml` (`status`, `repo`, `story`): change both together when the feature format moves.
+- Works alone in any repo, and inside a `task` folder (`skills/task`) through `--specs`. `task`'s `status.py` reads `feature.yaml` (`status`, `repo`, `story`): change both together when the feature format moves.
 - Each feature is `spec.md` (prose, from `templates/spec.md`) plus `feature.yaml` (everything the script checks). Status changes go through `scripts/flow.py`.
 - `scripts/flow.py` needs PyYAML. Its tests drive the CLI only; the repo root pre-commit hook runs them when this skill is staged (command: its `test:` in the root `skills.yaml`).
-- Commits: Conventional Commits in English, subject states the why, stage files by name. After a commit, refresh the backup: `git bundle create ~/.claude/skills-backups/flow.bundle --all`.
-- The skills-manager (registered as `local`, deployed to claude_code, preset Default) can replace this folder and drop the `.git`. Run `git status` here first; if it is not a repo: `git clone ~/.claude/skills-backups/flow.bundle <tmp>`, move `<tmp>/.git` into this folder, then `git checkout main`.
+- Commits: Conventional Commits in English, subject states the why, stage files by name.
