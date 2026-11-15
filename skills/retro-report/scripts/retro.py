@@ -521,7 +521,7 @@ def main(argv=None):
     r = sub.add_parser("render", help="write a valid retro folder's retro.md")
     r.add_argument("folder")
     sub.add_parser("pending", help="list the session logs no retro has read, oldest first")
-    c = sub.add_parser("check", help="list the findings of every retro still to fix")
+    c = sub.add_parser("check", help="list the findings still to fix, of every retro or of one folder")
     c.add_argument("folder", nargs="?", help="check this retro folder only (no config needed)")
     c.add_argument("--all", action="store_true", help="also list the fixed and wontfix findings")
     args = parser.parse_args(argv)
@@ -534,17 +534,15 @@ def main(argv=None):
             return 1
         print(yaml.safe_dump(result, sort_keys=False, allow_unicode=True, width=200), end="")
         return 0
-    if args.cmd == "check" and args.folder:
-        retro, _, errors = read_retro(args.folder)
-        lines, problems = check([(Path(args.folder), retro)], args.all) if not errors else ([], [])
-        if _fail(errors + problems):
-            return 1
-        print("\n".join(lines))
-        return 0
     if args.cmd in ("pending", "check"):
-        cfg, errors = load_config(args.config)
-        retros, retro_problems = read_retros(cfg) if cfg else ([], [])
-        if _fail(errors + retro_problems):
+        if args.cmd == "check" and args.folder:
+            retro, _, errors = read_retro(args.folder)
+            retros = [(Path(args.folder), retro)]
+        else:
+            cfg, errors = load_config(args.config)
+            retros, retro_problems = read_retros(cfg) if cfg else ([], [])
+            errors += retro_problems
+        if _fail(errors):
             return 1
         if args.cmd == "pending":
             lines = [str(log) for log in pending_logs(cfg, retros)]
