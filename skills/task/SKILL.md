@@ -34,7 +34,7 @@ The `.md` files (context, `brief.md`, the specs) are for the user to read: where
 
 ## Home and task folder
 
-`<skill-dir>/config.yaml` holds `home` (the central folder, e.g. `~/projects/home`). When it is missing, ask for it and write it. The home is one git repository with its own `CLAUDE.md`; read it at the start of a session. When the folder does not exist yet, propose creating it and, on a yes: `git init`, a `CLAUDE.md` whose line for the tasks says `tasks/<slug>/` follows this skill (`<skill-dir>/reference/format.md`), with status by `python3 <skill-dir>/scripts/status.py <folder>` and ids located by its `--find <id>`, and a `.gitignore` with `tasks/*/repos/` so the worktrees stay out of the home's history.
+`<skill-dir>/config.yaml` holds `home` (the central folder, e.g. `~/projects/home`). When it is missing, ask for it and write it. The home is one git repository with its own `CLAUDE.md`; read it at the start of a session. When the folder does not exist yet, propose creating it and, on a yes: `git init`, a `CLAUDE.md` whose tasks line names `format.md`, `status.py` for status and `--find` for ids, with this skill's real path, and a `.gitignore` with `tasks/*/repos/` so the worktrees stay out of the home's history.
 
 Every task lives in `<home>/tasks/<slug>/`, the slug in kebab-case (`ponto-export-csv`).
 
