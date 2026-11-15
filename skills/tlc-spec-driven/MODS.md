@@ -2,20 +2,19 @@
 
 ## Where this lives (read first)
 
-- **Real folder:** `~/.skills-manager/skills/tlc-spec-driven` - the skills-manager store. It holds the `.git` of this fork.
-- `~/.claude/skills/tlc-spec-driven` is a **symlink** to it. The manager replaced the real folder with that link (2026-11-08, when `show-me` was installed) and the `.git` that lived there was lost. Edit and commit in the store path; never rely on a `.git` under `~/.claude/skills`.
-- The manager can replace the folder again on an install, update or deploy. After any manager action, run `git -C ~/.skills-manager/skills/tlc-spec-driven status`; if it is not a repository, restore it: `git clone ~/.claude/skills-backups/tlc-spec-driven.bundle <tmp>`, then copy `<tmp>/.git` into the store folder and `git checkout main`.
-- Backup bundle: `~/.claude/skills-backups/tlc-spec-driven.bundle` (refresh with `git bundle create <that path> --all` after meaningful commits).
-- The manager has this skill as an `import` with no upstream URL, so it never fetches updates. Updates come from `tech-leads-club/agent-skills`, folder `packages/skills-catalog/skills/(development)/tlc-spec-driven`, and are merged by hand.
-- `.skill-meta.json` and `__pycache__` are git-ignored; the manager's content hash in its database goes stale after our commits and does not matter.
+- This folder is `skills/tlc-spec-driven/` in my skills repo (`~/Projects/skills`); `~/.claude/skills/tlc-spec-driven` links here. Edit and commit in the repo, as for any other skill there.
+- Its history was imported with paths rewritten under `skills/tlc-spec-driven/`, so its refs carry the `tlc-spec-driven/` prefix: branch `tlc-spec-driven/upstream`, tags `tlc-spec-driven/upstream-<version>`, branch `tlc-spec-driven/local-mods`.
+- Updates come from `tech-leads-club/agent-skills`, folder `packages/skills-catalog/skills/(development)/tlc-spec-driven`, and are merged by hand. The pinned upstream commit is this skill's reference in the repo's `skills.yaml`.
 
-Base: upstream 4.1.0 (`upstream-4.1.0`). Update procedure:
-1. Put the new upstream tree on branch `upstream` and tag it `upstream-<version>`.
-2. `git merge upstream` into `main`; conflicts land exactly on the lines below.
-3. Run `python3 scripts/selftest.py` and `python3 -m unittest discover -s tests`.
+Base: upstream 4.1.0 (tag `tlc-spec-driven/upstream-4.1.0`). Update procedure, from the repo root:
+1. `git worktree add <tmp> tlc-spec-driven/upstream`, copy the new upstream folder over `<tmp>/skills/tlc-spec-driven/` (`rsync -a --delete`), commit it there as `upstream: tlc-spec-driven <version> @<sha>`, tag it `tlc-spec-driven/upstream-<version>`, then `git worktree remove <tmp>`.
+2. `git merge tlc-spec-driven/upstream` into `main`; conflicts land exactly on the lines below.
+3. Run `python3 -I scripts/selftest.py` and `python3 -I -m unittest discover -s tests` from this folder (the repo hook also runs them).
+4. Set the new upstream commit in `skills.yaml` and run `python scripts/skills.py credits --write`.
 
-See what we changed: `git diff upstream-4.1.0 main` (or `git log upstream-4.1.0..main`).
-The previous version (3.x + our edits) is kept on branch `local-mods`. A bundle backup of the whole repo is at `~/.claude/skills-backups/tlc-spec-driven.bundle`.
+See what we changed: `git diff tlc-spec-driven/upstream-4.1.0 main -- skills/tlc-spec-driven` (or `git log tlc-spec-driven/upstream-4.1.0..main -- skills/tlc-spec-driven`).
+
+The previous version (3.x + our edits) is kept on branch `tlc-spec-driven/local-mods`.
 
 ## Kept
 
@@ -37,4 +36,4 @@ The previous version (3.x + our edits) is kept on branch `local-mods`. A bundle 
 - `run_mutant.py` and the 5-mutant sensor: upstream dropped mutations for proofs run with the project's own tests.
 - Handoff section-scoped write rule, lessons and sub-agents wording tied to mutants.
 - "Ask which MCPs/skills per task": upstream removed it.
-- `REVIEW.md` and `.changes/` (history on `local-mods`).
+- `REVIEW.md` and `.changes/` (history on `tlc-spec-driven/local-mods`).
