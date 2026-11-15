@@ -136,6 +136,26 @@ def search_streaks(cs):
     return runs
 
 
+TOKEN_FIELDS = {"input": "input_tokens", "output": "output_tokens",
+                "cache_read": "cache_read_input_tokens", "cache_write": "cache_creation_input_tokens"}
+
+
+def tokens(records):
+    """Tokens summed once per message id: a message spread over several lines repeats its usage."""
+    by_id = {}
+    for rec in records:
+        msg = rec.get("message") or {}
+        if isinstance(msg.get("usage"), dict):
+            by_id[msg.get("id") or id(rec)] = msg["usage"]
+    return {k: sum(int(u.get(f) or 0) for u in by_id.values()) for k, f in TOKEN_FIELDS.items()}
+
+
+def cost_usd(records):
+    """The session's own total from its last cost-state record; None when it recorded none."""
+    totals = [r["totalCostUSD"] for r in records if r.get("type") == "cost-state" and "totalCostUSD" in r]
+    return round(float(totals[-1]), 4) if totals else None
+
+
 def _time(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
@@ -160,6 +180,8 @@ def digest(path):
         "failures": failures(cs),
         "repeats": repeats(cs),
         "search_streaks": search_streaks(cs),
+        "tokens": tokens(records),
+        "cost_usd": cost_usd(records),
     }
 
 

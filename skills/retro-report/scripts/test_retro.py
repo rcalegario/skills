@@ -144,3 +144,20 @@ def test_search_streak_of_three(tmp_path, capsys):
         "for d in */; do echo $d; grep -c x $d/a; done",
         "Grep NOW-5",
         "Read now.md"]}]
+
+
+def usage(i, o, cr, cw):
+    return {"input_tokens": i, "output_tokens": o, "cache_read_input_tokens": cr, "cache_creation_input_tokens": cw}
+
+
+def test_tokens_once_per_message_and_cost(tmp_path, capsys):
+    log = (Log().prompt()
+           .bash("ls", msg_id="m1", usage=usage(1, 10, 100, 1000))
+           .bash("pwd", msg_id="m1", usage=usage(1, 10, 100, 1000))     # same message, second block
+           .bash("git status", msg_id="m2", usage=usage(2, 20, 200, 2000)))
+    d = digest(tmp_path, log, capsys)
+    assert d["tokens"] == {"input": 3, "output": 30, "cache_read": 300, "cache_write": 3000}
+    assert d["cost_usd"] is None
+
+    log.records.append({"type": "cost-state", "totalCostUSD": 1.2647382999999996})
+    assert digest(tmp_path, log, capsys)["cost_usd"] == 1.2647
