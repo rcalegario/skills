@@ -213,3 +213,53 @@ def test_missing_credits_markers_fail_validate(tmp_path):
     out = run(root, "validate")
     assert out.returncode == 1
     assert "credits" in out.stdout
+
+
+def with_installed(block):
+    return GOOD.replace("installed: []\n", "installed:\n" + block)
+
+
+GOOD_INSTALLED = """\
+  - name: tdd
+    repo: https://github.com/acme/skills
+    path: skills/tdd
+    commit: abc1234def56
+  - name: lost
+    origin: unknown
+"""
+
+
+def test_good_installed_passes(tmp_path):
+    root = make_repo(tmp_path, manifest=with_installed(GOOD_INSTALLED))
+    write_credits(root)
+    out = run(root, "validate")
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+@pytest.mark.parametrize("entry", [
+    "  - repo: https://github.com/acme/skills\n    path: p\n    commit: abc1234\n",
+    "  - name: x\n    path: p\n    commit: abc1234\n",
+    "  - name: x\n    repo: https://github.com/acme/skills\n    commit: abc1234\n",
+    "  - name: x\n    repo: https://github.com/acme/skills\n    path: p\n",
+    "  - name: x\n    repo: https://github.com/acme/skills\n    path: p\n    commit: main\n",
+    "  - name: x\n    repo: https://github.com/acme/skills\n    path: p\n    commit: unknown\n",
+    "  - name: x\n",
+], ids=["no-name", "no-repo", "no-path", "no-commit", "bad-sha", "unknown-commit", "no-origin"])
+def test_installed_entry_without_origin_or_commit_fails(tmp_path, entry):
+    root = make_repo(tmp_path, manifest=with_installed(entry))
+    write_credits(root)
+    out = run(root, "validate")
+    assert out.returncode == 1, out.stdout
+    assert "installed" in out.stdout
+
+
+@pytest.mark.parametrize("block, culprit", [
+    ("  - name: x\n    origin: unknown\n  - name: x\n    origin: unknown\n", "x"),
+    ("  - name: alpha\n    origin: unknown\n", "alpha"),
+])
+def test_installed_duplicate_or_own_name_fails(tmp_path, block, culprit):
+    root = make_repo(tmp_path, manifest=with_installed(block))
+    write_credits(root)
+    out = run(root, "validate")
+    assert out.returncode == 1, out.stdout
+    assert culprit in out.stdout

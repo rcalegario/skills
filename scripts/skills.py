@@ -40,6 +40,29 @@ def reference_errors(skill, i, ref, own_names):
     return errors
 
 
+def installed_errors(installed, own_names):
+    errors = []
+    seen = set()
+    for i, item in enumerate(installed):
+        name = item.get("name")
+        where = f"installed: entry {i + 1}" + (f" ({name})" if name else "")
+        if not name:
+            errors.append(f"{where}: needs a name")
+        elif name in own_names:
+            errors.append(f"{where}: '{name}' is an own skill")
+        elif name in seen:
+            errors.append(f"{where}: '{name}' is listed twice")
+        seen.add(name)
+        if item.get("origin") == "unknown":
+            continue
+        missing = [k for k in ("repo", "path", "commit") if not item.get(k)]
+        if missing:
+            errors.append(f"{where}: needs {', '.join(missing)} (or origin: unknown)")
+        elif not SHA.match(str(item["commit"])):
+            errors.append(f"{where}: commit must be a 7-40 char hex sha")
+    return errors
+
+
 def reference_line(ref):
     took = f" - {ref['took']}" if ref.get("took") else ""
     relation = WORDING.get(ref.get("relation"), ref.get("relation"))
@@ -99,6 +122,7 @@ def validate(root):
     for entry in entries:
         for i, ref in enumerate(entry.get("references") or []):
             errors.extend(reference_errors(entry.get("name"), i, ref, own_names))
+    errors.extend(installed_errors(manifest.get("installed") or [], own_names))
     if not errors:
         errors.extend(credits_errors(root, manifest))
     return errors
