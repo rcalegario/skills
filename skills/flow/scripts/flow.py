@@ -553,7 +553,9 @@ def set_task(path, root, specs, text, data, tasks, tid, value, commit):
             except ValueError:  # another drive on Windows
                 rel = ".."
             inside = rel != ".." and not rel.startswith("../")
-            pathspec = ["--", ".", ":(exclude)%s" % rel] if inside else []
+            # Specs inside the repo: check only the folder that holds them (a task folder among others).
+            scope = os.path.dirname(rel) or "."
+            pathspec = ["--", scope, ":(exclude)%s" % rel] if inside else []
             code, porcelain = git(root, "status", "--porcelain", *pathspec)
             if code != 0:
                 print("ERROR: not a git repository: %s" % root)

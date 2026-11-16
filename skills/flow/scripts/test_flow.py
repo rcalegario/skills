@@ -548,6 +548,39 @@ def test_untracked_specs_inside_root_do_not_block_done(tmp_path):
     assert run_split(tmp_path, specs, "set", "demo", "T1", "verifying") == 0
 
 
+@pytest.fixture
+def home(tmp_path):
+    """A repo holding several task folders, each with its own .specs."""
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.email", "t@example.com")
+    git(tmp_path, "config", "user.name", "t")
+    for name in ("tasks/mine/notes.md", "tasks/other/notes.md", "todo.md"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("v1\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "init")
+    specs = tmp_path / "tasks" / "mine" / ".specs"
+    write_feature(specs / "features" / "demo")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "specs")
+    commit_in(tmp_path, "tasks/mine/notes.md", "v2\n")
+    return tmp_path, specs
+
+
+def test_dirty_files_of_other_tasks_do_not_block_verifying(home):
+    root, specs = home
+    (root / "tasks" / "other" / "notes.md").write_text("dirty\n")
+    (root / "todo.md").write_text("dirty\n")
+    (root / "tasks" / "other" / "new.md").write_text("untracked\n")
+    assert run_split(root, specs, "set", "demo", "T1", "verifying") == 0
+
+
+def test_dirty_files_of_its_own_task_folder_still_block_verifying(home):
+    root, specs = home
+    (root / "tasks" / "mine" / "notes.md").write_text("dirty\n")
+    assert run_split(root, specs, "set", "demo", "T1", "verifying") == 1
+
+
 # ---------------------------------------------------------------- new and roadmap --approve
 
 def test_new_writes_a_draft_skeleton_and_the_spec(repo):

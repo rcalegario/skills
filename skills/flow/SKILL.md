@@ -232,7 +232,7 @@ Run `flow.py status <feature>` and take a task from the **frontier** (no commit 
 3. Write the minimum code that makes it pass, touching only what the task needs.
 4. Run the task's `verify` command, plus typecheck/lint when the project has them, until it is green.
 5. Commit the task's code and tests only, with the task's `commit` message, staging files by name.
-6. `set <feature> T<n> verifying`. It records `HEAD`, prints the next frontier, and refuses while code changes are uncommitted. The task is `done` only when the checks of its criteria pass (CLOSE, or earlier for checks you can run now).
+6. `set <feature> T<n> verifying`. It records `HEAD`, prints the next frontier, and refuses while code changes are uncommitted (with `--specs` inside the repo, only in the folder that holds them). The task is `done` only when the checks of its criteria pass (CLOSE, or earlier for checks you can run now).
 
 **Tests hold the line.** Each test asserts the outcome its criterion names, never the code's internals, and would fail under a plausible wrong implementation. When a test seems wrong, ask the user before changing it; a red test is fixed in the code, with assertions kept as strict as the criterion.
 
