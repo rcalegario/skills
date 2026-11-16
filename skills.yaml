@@ -68,7 +68,7 @@ own:
     references: []
 
   - name: retro-report
-    test: uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts
+    test: uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts && claude plugin test mod
     references:
       - repo: https://github.com/mattpocock/skills
         path: skills/engineering/retro

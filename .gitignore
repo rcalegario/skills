@@ -2,3 +2,6 @@
 __pycache__/
 skills/task/config.yaml
 skills/retro-report/config.yaml
+# written by Claude Code when it loads the mod
+skills/retro-report/mod/.claude-plugin/types/
+skills/retro-report/mod/tsconfig.json
