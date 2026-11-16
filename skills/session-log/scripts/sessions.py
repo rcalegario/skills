@@ -9,6 +9,7 @@ The digest functions are a copy of retro-report's retro.py.
 """
 import argparse
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -219,13 +220,15 @@ def digest(paths):
     parts = []
     for path in paths:
         try:
-            parts.append(read_records(path))
+            records = read_records(path)
         except NotASessionLog:
             continue
+        stamps = [_time(r["timestamp"]) for r in records if r.get("timestamp")]
+        if stamps:
+            parts.append((min(stamps), records))
     if not parts:
         raise NotASessionLog(paths[0])
-    first = lambda recs: min((_time(r["timestamp"]) for r in recs if r.get("timestamp")), default=datetime.max)
-    records = [r for recs in sorted(parts, key=lambda recs: first(recs).timestamp() if recs else 0) for r in recs]
+    records = [r for _, recs in sorted(parts, key=lambda part: part[0]) for r in recs]
     session = next((r["sessionId"] for r in records if r.get("sessionId")), Path(paths[0]).stem)
     project = next((r["cwd"] for r in records if r.get("cwd")), None)
     stamps = sorted((r["timestamp"] for r in records if r.get("timestamp")), key=_time)
@@ -246,15 +249,8 @@ def digest(paths):
     }
 
 
-def _fail(errors):
-    """Print the errors; true when there were any."""
-    for e in errors:
-        print(e, file=sys.stderr)
-    return bool(errors)
-
-
 def load_config(path):
-    """out from config.yaml, ~ expanded, with one line per problem."""
+    """The out folder from config.yaml, ~ expanded; or None and the problem."""
     problem = None
     if not path.is_file():
         problem = "missing"
@@ -266,32 +262,39 @@ def load_config(path):
         if problem is None and not (isinstance(cfg, dict) and isinstance(cfg.get("out"), str) and cfg["out"].strip()):
             problem = "out: must be a path"
     if problem:
-        return None, [f"{path}: {problem}; see config.example.yaml"]
-    return {"out": Path(cfg["out"]).expanduser()}, []
+        return None, f"{path}: {problem}; see config.example.yaml"
+    return Path(cfg["out"]).expanduser(), None
 
 
-def session_file(out, d):
-    """<out>/<local date of the session's start>/<session>.yaml."""
-    day = _time(d["start"]).astimezone().strftime("%Y-%m-%d") if d["start"] else "undated"
-    return out / day / f"{d['session']}.yaml"
+def session_files(out, session):
+    """The files a session has under out, one per date folder it was written to (normally one)."""
+    return list(out.glob(f"*/{session}.yaml"))
 
 
-def write_session(out, logs):
-    """Digest one session's logs into its file; False when none is a session log."""
+def write_session(out, session, logs):
+    """Digest one session's logs into <out>/<local start date>/<session>.yaml, dropping copies in other date folders,
+    with the mtime of its newest log, so a log that grows later is newer than the file. False when none is a
+    session log."""
+    mtimes = [log.stat().st_mtime for log in logs if log.is_file()]       # read before the logs, not after
     try:
         d = digest(logs)
     except NotASessionLog:
         return False
-    path = session_file(out, d)
+    newest = max(mtimes)
+    path = out / _time(d["start"]).astimezone().strftime("%Y-%m-%d") / f"{session}.yaml"
+    for old in session_files(out, session):
+        if old != path:
+            old.unlink()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(d, sort_keys=False, allow_unicode=True, width=200))
+    os.utime(path, (newest, newest))
     return True
 
 
 def is_fresh(out, session, logs):
     """True when the session's file exists and is not older than any of its logs."""
     newest = max(log.stat().st_mtime for log in logs)
-    return any(f.stat().st_mtime >= newest for f in out.glob(f"*/{session}.yaml"))
+    return any(f.stat().st_mtime >= newest for f in session_files(out, session))
 
 
 def main(argv=None):
@@ -305,16 +308,16 @@ def main(argv=None):
                    help="folder of the project log folders (default: ~/.claude/projects)")
     args = parser.parse_args(argv)
 
-    cfg, errors = load_config(args.config)
-    if _fail(errors):
+    out, problem = load_config(args.config)
+    if problem:
+        print(problem, file=sys.stderr)
         return 1
-    out = cfg["out"]
     # A session id has a log in each project folder it ran in (a moved project): its file joins them all.
     groups = {}
-    for log in [Path(log) for log in args.logs] or sorted(args.projects.glob("*/*.jsonl")):
+    for log in [Path(name) for name in args.logs] or sorted(args.projects.glob("*/*.jsonl")):
         groups.setdefault(log.stem, {log}).update(args.projects.glob(f"*/{log.stem}.jsonl"))
     fresh = set() if args.logs else {s for s, logs in groups.items() if is_fresh(out, s, logs)}
-    count = Counter(write_session(out, sorted(logs)) for s, logs in groups.items() if s not in fresh)
+    count = Counter(write_session(out, s, sorted(logs)) for s, logs in groups.items() if s not in fresh)
     print(f"{count[True]} written, {len(fresh)} up to date, {count[False]} not session logs")
     return 0
 

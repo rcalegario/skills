@@ -200,6 +200,38 @@ def test_session_logs_in_two_folders_merge(tmp_path, capsys):
         assert d["calls"] == {"total": 3, "by_tool": {"Bash": 3}}
 
 
+def test_log_without_timestamps_is_not_a_session(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    import time
+    time.tzset()
+    log = Log(sid="a").prompt().bash("ls")
+    for r in log.records:
+        del r["timestamp"]
+    log.write(tmp_path / "projects" / "-work-repo" / "a.jsonl")
+    assert scan(tmp_path, capsys) == (0, "0 written, 0 up to date, 1 not session logs\n", "")
+    assert not (tmp_path / "out").exists()
+
+
+def test_one_file_per_session_across_dates(tmp_path, capsys):
+    project_log(tmp_path, "a")
+    old = tmp_path / "out" / "2026-01-01" / "a.yaml"
+    old.parent.mkdir(parents=True)
+    old.write_text("old\n")
+    os.utime(old, (1000, 1000))
+    assert scan(tmp_path, capsys)[1] == "1 written, 0 up to date, 0 not session logs\n"
+    assert [p.relative_to(tmp_path / "out").as_posix() for p in (tmp_path / "out").glob("*/*.yaml")] == [
+        "2026-11-14/a.yaml"]
+
+
+def test_file_takes_log_mtime(tmp_path, capsys):
+    log = project_log(tmp_path, "a", mtime=1000)
+    file = tmp_path / "out" / "2026-11-14" / "a.yaml"
+    scan(tmp_path, capsys)
+    assert file.stat().st_mtime == 1000
+    os.utime(log, (1001, 1001))                              # the live log grew after the file was written
+    assert scan(tmp_path, capsys)[1] == "1 written, 0 up to date, 0 not session logs\n"
+
+
 # Digest tests, copied from retro-report's test_retro.py with the file as the output.
 
 def test_failure_classes_read_from_text(tmp_path, capsys):
