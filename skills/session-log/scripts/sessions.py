@@ -1,6 +1,8 @@
 """Session log extraction for Claude Code: one YAML file per session.
 
-  sessions.py extract [log ...]   write <out>/<local start date>/<session-id>.yaml for each named log
+  sessions.py extract [log ...]   write <out>/<local start date>/<session-id>.yaml for each named log; with
+                                  none, for every session log under ~/.claude/projects whose file is missing
+                                  or older than the log
 
 Reads config.yaml beside this skill's SKILL.md (see config.example.yaml), or --config.
 The digest functions are a copy of retro-report's retro.py.
@@ -276,20 +278,30 @@ def write_session(out, log):
     return True
 
 
+def is_fresh(out, log):
+    """True when the log's file exists and is not older than the log."""
+    return any(f.stat().st_mtime >= log.stat().st_mtime for f in out.glob(f"*/{log.stem}.yaml"))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, default=Path(__file__).resolve().parent.parent / "config.yaml",
                         help="config.yaml to read (default: the one beside SKILL.md)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("extract", help="write the session file of each named log")
-    e.add_argument("logs", nargs="*")
+    e.add_argument("logs", nargs="*", help="logs to write whatever their mtime (default: every stale one)")
+    e.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects",
+                   help="folder of the project log folders (default: ~/.claude/projects)")
     args = parser.parse_args(argv)
 
     cfg, errors = load_config(args.config)
     if _fail(errors):
         return 1
-    count = Counter(write_session(cfg["out"], Path(log)) for log in args.logs)
-    print(f"{count[True]} written, 0 up to date, {count[False]} not session logs")
+    out = cfg["out"]
+    logs = [Path(log) for log in args.logs] or sorted(args.projects.glob("*/*.jsonl"))
+    fresh = [] if args.logs else [log for log in logs if is_fresh(out, log)]
+    count = Counter(write_session(out, log) for log in logs if log not in fresh)
+    print(f"{count[True]} written, {len(fresh)} up to date, {count[False]} not session logs")
     return 0
 
 

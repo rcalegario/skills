@@ -128,6 +128,57 @@ def test_config_missing_or_without_out(tmp_path, capsys):
         1, "", f"{path}: out: must be a path; see config.example.yaml\n")
 
 
+def scan(tmp_path, capsys):
+    return run(capsys, "--config", str(config(tmp_path)), "extract", "--projects", str(tmp_path / "projects"))
+
+
+def project_log(tmp_path, sid, folder="-work-repo", mtime=None):
+    path = Log(sid=sid).prompt().bash("ls").write(tmp_path / "projects" / folder / f"{sid}.jsonl")
+    if mtime:
+        os.utime(path, (mtime, mtime))
+    return path
+
+
+def test_scan_writes_missing_files_by_local_date(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("TZ", "Pacific/Kiritimati")          # UTC+14: 10:01Z on the 14th is the 15th locally
+    import time
+    time.tzset()
+    project_log(tmp_path, "a")
+    project_log(tmp_path, "b", folder="-work-other")
+    Log(sid="sub").prompt().write(tmp_path / "projects" / "-work-repo" / "a" / "subagents" / "agent-x.jsonl")
+    assert scan(tmp_path, capsys) == (0, "2 written, 0 up to date, 0 not session logs\n", "")
+    assert sorted(p.name for p in (tmp_path / "out" / "2026-11-15").iterdir()) == ["a.yaml", "b.yaml"]
+
+
+def test_scan_rewrites_stale_file(tmp_path, capsys):
+    log = project_log(tmp_path, "a")
+    stale = tmp_path / "out" / "2026-11-14" / "a.yaml"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("stale\n")
+    os.utime(stale, (1000, 1000))
+    os.utime(log, (2000, 2000))
+    assert scan(tmp_path, capsys)[1] == "1 written, 0 up to date, 0 not session logs\n"
+    assert yaml.safe_load(stale.read_text())["session"] == "a"
+
+
+def test_scan_leaves_fresh_file(tmp_path, capsys):
+    project_log(tmp_path, "a", mtime=1000)
+    fresh = tmp_path / "out" / "2026-11-14" / "a.yaml"
+    fresh.parent.mkdir(parents=True)
+    fresh.write_text("kept\n")
+    os.utime(fresh, (2000, 2000))
+    assert scan(tmp_path, capsys)[1] == "0 written, 1 up to date, 0 not session logs\n"
+    assert fresh.read_text() == "kept\n"
+
+
+def test_scan_skips_non_session_logs(tmp_path, capsys):
+    project_log(tmp_path, "a")
+    other = tmp_path / "projects" / "-work-repo" / "other.jsonl"
+    other.write_text('{"type": "summary"}\n')
+    assert scan(tmp_path, capsys) == (0, "1 written, 0 up to date, 1 not session logs\n", "")
+    assert scan(tmp_path, capsys)[1] == "0 written, 1 up to date, 1 not session logs\n"
+
+
 # Digest tests, copied from retro-report's test_retro.py with the file as the output.
 
 def test_failure_classes_read_from_text(tmp_path, capsys):
