@@ -179,6 +179,27 @@ def test_scan_skips_non_session_logs(tmp_path, capsys):
     assert scan(tmp_path, capsys)[1] == "0 written, 1 up to date, 1 not session logs\n"
 
 
+def test_session_logs_in_two_folders_merge(tmp_path, capsys):
+    old = Log(cwd="/old/repo", sid="a").prompt().bash("ls")
+    new = Log(cwd="/new/repo", sid="a")
+    new.minute = 30
+    new.prompt().bash("pwd").bash("git status")
+    old.write(tmp_path / "projects" / "-old-repo" / "a.jsonl")
+    named = new.write(tmp_path / "projects" / "-new-repo" / "a.jsonl")
+    stub = tmp_path / "projects" / "-stub" / "a.jsonl"         # metadata only, as a moved project leaves
+    stub.parent.mkdir()
+    stub.write_text('{"type": "last-prompt", "sessionId": "a"}\n')
+    file = tmp_path / "out" / "2026-11-14" / "a.yaml"
+    for extract_run in (lambda: scan(tmp_path, capsys),
+                        lambda: run(capsys, "--config", str(config(tmp_path)), "extract",
+                                    "--projects", str(tmp_path / "projects"), str(named))):
+        file.unlink(missing_ok=True)
+        assert extract_run()[1] == "1 written, 0 up to date, 0 not session logs\n"
+        d = yaml.safe_load(file.read_text())
+        assert (d["start"], d["end"]) == ("2026-11-14T10:01:00Z", "2026-11-14T10:35:00Z")
+        assert d["calls"] == {"total": 3, "by_tool": {"Bash": 3}}
+
+
 # Digest tests, copied from retro-report's test_retro.py with the file as the output.
 
 def test_failure_classes_read_from_text(tmp_path, capsys):

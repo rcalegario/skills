@@ -214,9 +214,19 @@ def _iso(ts):
     return _time(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def digest(path):
-    records = read_records(path)
-    session = next((r["sessionId"] for r in records if r.get("sessionId")), Path(path).stem)
+def digest(paths):
+    """One session from its logs (one per project folder it ran in), joined in order of their first record."""
+    parts = []
+    for path in paths:
+        try:
+            parts.append(read_records(path))
+        except NotASessionLog:
+            continue
+    if not parts:
+        raise NotASessionLog(paths[0])
+    first = lambda recs: min((_time(r["timestamp"]) for r in recs if r.get("timestamp")), default=datetime.max)
+    records = [r for recs in sorted(parts, key=lambda recs: first(recs).timestamp() if recs else 0) for r in recs]
+    session = next((r["sessionId"] for r in records if r.get("sessionId")), Path(paths[0]).stem)
     project = next((r["cwd"] for r in records if r.get("cwd")), None)
     stamps = sorted((r["timestamp"] for r in records if r.get("timestamp")), key=_time)
     call_list = calls(records)
@@ -232,7 +242,7 @@ def digest(path):
         "search_streaks": search_streaks(call_list),
         "tokens": tokens(records),
         "cost_usd": cost_usd(records),
-        "subagents": subagents(path),
+        "subagents": [a for path in paths for a in subagents(path)],
     }
 
 
@@ -266,10 +276,10 @@ def session_file(out, d):
     return out / day / f"{d['session']}.yaml"
 
 
-def write_session(out, log):
-    """Digest one log into its file; False when it is not a session log."""
+def write_session(out, logs):
+    """Digest one session's logs into its file; False when none is a session log."""
     try:
-        d = digest(log)
+        d = digest(logs)
     except NotASessionLog:
         return False
     path = session_file(out, d)
@@ -278,9 +288,10 @@ def write_session(out, log):
     return True
 
 
-def is_fresh(out, log):
-    """True when the log's file exists and is not older than the log."""
-    return any(f.stat().st_mtime >= log.stat().st_mtime for f in out.glob(f"*/{log.stem}.yaml"))
+def is_fresh(out, session, logs):
+    """True when the session's file exists and is not older than any of its logs."""
+    newest = max(log.stat().st_mtime for log in logs)
+    return any(f.stat().st_mtime >= newest for f in out.glob(f"*/{session}.yaml"))
 
 
 def main(argv=None):
@@ -298,9 +309,12 @@ def main(argv=None):
     if _fail(errors):
         return 1
     out = cfg["out"]
-    logs = [Path(log) for log in args.logs] or sorted(args.projects.glob("*/*.jsonl"))
-    fresh = [] if args.logs else [log for log in logs if is_fresh(out, log)]
-    count = Counter(write_session(out, log) for log in logs if log not in fresh)
+    # A session id has a log in each project folder it ran in (a moved project): its file joins them all.
+    groups = {}
+    for log in [Path(log) for log in args.logs] or sorted(args.projects.glob("*/*.jsonl")):
+        groups.setdefault(log.stem, {log}).update(args.projects.glob(f"*/{log.stem}.jsonl"))
+    fresh = set() if args.logs else {s for s, logs in groups.items() if is_fresh(out, s, logs)}
+    count = Counter(write_session(out, sorted(logs)) for s, logs in groups.items() if s not in fresh)
     print(f"{count[True]} written, {len(fresh)} up to date, {count[False]} not session logs")
     return 0
 
