@@ -88,6 +88,25 @@ own:
         relation: inspired
         took: Classifying a command's output into error classes by pattern
 
+  - name: session-log
+    test: uv run --no-project --with pytest --with pyyaml python -m pytest -q -p no:cacheprovider scripts
+    references:
+      - skill: retro-report
+        relation: derived
+        took: The session digest of retro.py (calls, failures, repeats, search streaks, tokens, cost, subagents), copied
+      - repo: https://github.com/microsoft/TokenEconomizer
+        path: tokeneconomizer/trace
+        commit: 7042ea8
+        license: Apache-2.0
+        relation: inspired
+        took: Reading a Claude Code transcript as an ordered list of tool calls with their results, through retro-report
+      - repo: https://github.com/microsoft/TokenEconomizer
+        path: tokeneconomizer/microskills/observe.py
+        commit: 7042ea8
+        license: Apache-2.0
+        relation: inspired
+        took: Classifying a command's output into error classes by pattern, through retro-report
+
 installed:
   - name: agent-reach
     repo: https://github.com/Panniantong/Agent-Reach
