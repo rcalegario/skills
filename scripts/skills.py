@@ -113,7 +113,7 @@ def validate(root):
     manifest = load(root)
     entries = own_entries(manifest)
     own_names = {e.get("name") for e in entries}
-    folders = {p.name for p in (root / "skills").iterdir() if p.is_dir()}
+    folders = {p.name for p in (root / "skills").iterdir() if p.is_dir() and not p.name.startswith(".")}
     errors = []
     for name in sorted(folders - own_names):
         errors.append(f"skills/{name}: no own entry in skills.yaml")

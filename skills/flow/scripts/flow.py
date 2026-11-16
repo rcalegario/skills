@@ -5,20 +5,29 @@ Commands:
   status  <feature>                         progress and the frontier (tasks ready to start)
   check   <feature>                         validate feature.yaml and spec.md; exit 1 on any error
   approve <feature> spec|tasks              record the user's approval (M: `spec` approves both)
-  set     <feature> T<n> doing|done [--commit X]
-                                            start a task, or record its commit (HEAD by default) and close it
-  set     <feature> AC<n> pass|fail         record the result of a criterion's checks
-  review  <feature>                         every task done: building -> review
+  set     <feature> T<n> doing|verifying [--commit X]
+                                            start a task, or record its commit (HEAD by default): it then waits for its checks
+  set     <feature> AC<n> pass|fail         record the result of a criterion's checks; a task is done once every
+                                            check of the criteria it covers passes (never set by hand)
+  finding <feature> --text T --action fix --task T3 | --action wontfix --reason R | --none
+                                            record a review finding (or a clean review)
+  review  <feature>                         every task verifying or done: building -> review
   finish  <feature>                         every check pass and review recorded: review -> done
-  roadmap                                   validate <specs>/roadmap.yaml, show progress and the features ready to start
+  roadmap [--approve]                       validate <specs>/roadmap.yaml, write the status of every feature and milestone
+                                            into it, show progress and the features ready to start;
+                                            --approve stamps today as `approved` once it is valid
+  new     <feature> --title T --size S|M|L [--roadmap F] [--repo R] [--decisions D-1,D-2] [--validations V-1] [--test CMD]
+                                            create the draft feature.yaml and spec.md
 
 <feature> is a folder name under <specs>/features/, a folder path, or a path to feature.yaml.
 <specs> is --specs, default <root>/.specs; --root is the git repository the task commits live in.
-A feature's roadmap status comes from the feature.yaml whose `roadmap:` names it.
+A feature's roadmap status comes from the feature.yaml whose `roadmap:` names it, and the script writes it
+back into roadmap.yaml (with the milestone status) after every command that changes a feature.
 """
 import argparse
 import datetime
 import glob
+import json
 import os
 import re
 import subprocess
@@ -32,7 +41,8 @@ except ImportError:
 
 SIZES = ("S", "M", "L")
 STATUSES = ("draft", "approved", "building", "review", "done")
-TASK_STATUSES = ("todo", "doing", "done")
+TASK_STATUSES = ("todo", "doing", "verifying", "done")
+STARTED = ("verifying", "done")        # a task whose commit exists
 CHECK_STATUSES = ("pending", "pass", "fail")
 ACTIONS = ("fix", "wontfix")
 MAX_TASKS = 8
@@ -75,6 +85,12 @@ def git(root, *args):
     proc = subprocess.run(["git"] + list(args), cwd=root, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, universal_newlines=True)
     return proc.returncode, proc.stdout.strip()
+
+
+def task_root(root, task):
+    """The repo a task's commit lives in: its optional 'repo' path, else --root."""
+    repo = task.get("repo")
+    return os.path.abspath(os.path.expanduser(str(repo))) if repo else root
 
 
 def commit_exists(root, sha):
@@ -164,17 +180,17 @@ def validate(data, root, specs=None, folder=None):
         if tstatus not in TASK_STATUSES:
             err("%s status must be one of %s" % (tid, ", ".join(TASK_STATUSES)))
         sha = task.get("sha")
-        if tstatus == "done":
+        if tstatus in STARTED:
             if not sha:
-                err("%s is done without a 'sha'" % tid)
-            elif not commit_exists(root, str(sha)):
+                err("%s is %s without a 'sha'" % (tid, tstatus))
+            elif not commit_exists(task_root(root, task), str(sha)):
                 err("%s sha %s is not in this repository" % (tid, sha))
             else:
-                shas.setdefault(str(sha), []).append(tid)
+                shas.setdefault((task_root(root, task), str(sha)), []).append(tid)
         elif sha:
             err("%s has a sha but status '%s'" % (tid, tstatus))
 
-    for sha, tids in shas.items():
+    for (_, sha), tids in shas.items():
         if len(tids) > 1:
             err("tasks %s share commit %s (one commit per task)" % (", ".join(tids), sha))
 
@@ -184,8 +200,8 @@ def validate(data, root, specs=None, folder=None):
                 err("%s is blocked by itself" % tid)
             elif dep not in by_id:
                 err("%s is blocked by unknown task %s" % (tid, dep))
-            elif task.get("status") in ("doing", "done") and by_id[dep].get("status") != "done":
-                err("%s is %s but its blocker %s is not done" % (tid, task.get("status"), dep))
+            elif task.get("status") in ("doing",) + STARTED and by_id[dep].get("status") not in STARTED:
+                err("%s is %s but its blocker %s is not verifying or done" % (tid, task.get("status"), dep))
     cycle = find_cycle(by_id)
     if cycle:
         err("blocked_by cycle: %s" % " -> ".join(cycle))
@@ -205,6 +221,12 @@ def validate(data, root, specs=None, folder=None):
             err("check %s needs exactly one of 'test' or 'manual'" % name)
         if c.get("status") not in CHECK_STATUSES:
             err("check %s status must be one of %s" % (name, ", ".join(CHECK_STATUSES)))
+    for tid, task in by_id.items():
+        if task.get("status") == "done":
+            for c in checks:
+                if c.get("ac") in as_list(task.get("covers")) and c.get("status") != "pass":
+                    err("%s is done but check %s is %s" % (tid, c.get("ac"), c.get("status")))
+                    break
     if any(str(c.get("test") or "").strip() for c in checks) and not str(data.get("test") or "").strip():
         err("'test' (the suite command) is required when a check names a test")
 
@@ -281,10 +303,10 @@ def find_cycle(by_id):
 # ---------------------------------------------------------------- status
 
 def frontier(tasks):
-    done = {t.get("id") for t in tasks if t.get("status") == "done"}
+    done = {t.get("id") for t in tasks if t.get("status") in STARTED}
     ready, blocked = [], []
     for task in tasks:
-        if task.get("status") == "done":
+        if task.get("status") in STARTED:
             continue
         waiting = [d for d in as_list(task.get("blocked_by")) if d not in done]
         (blocked if waiting else ready).append((task, waiting))
@@ -296,7 +318,10 @@ def cmd_status(path, root, specs):
     tasks = [t for t in as_list(data.get("tasks")) if isinstance(t, dict)]
     done = [t for t in tasks if t.get("status") == "done"]
     print("%s - %s [%s, %s]" % (data.get("id"), data.get("title"), data.get("size"), data.get("status")))
-    print("Tasks: %d/%d done" % (len(done), len(tasks)))
+    verifying = [t for t in tasks if t.get("status") == "verifying"]
+    print("Tasks: %d/%d done%s" % (len(done), len(tasks), ", %d verifying" % len(verifying) if verifying else ""))
+    for task in verifying:
+        print("  %-8s %s  %s" % ("verifying", task.get("id"), task.get("title")))
     ready, blocked = frontier(tasks)
     for task, _ in ready:
         state = "doing" if task.get("status") == "doing" else "ready"
@@ -470,8 +495,12 @@ def cmd_set(path, root, specs, target, value, commit):
     tasks = {t.get("id"): t for t in as_list(data.get("tasks")) if isinstance(t, dict)}
     acs = [a.get("id") for a in as_list(data.get("acceptance")) if isinstance(a, dict)]
     if target in tasks:
-        if value not in ("doing", "done"):
-            print("ERROR: a task is set to doing or done")
+        if value == "done":
+            print("ERROR: a task is not set to done: it is done once the checks of its criteria pass "
+                  "(`set <feature> AC<n> pass`)")
+            return 1
+        if value not in ("doing", "verifying"):
+            print("ERROR: a task is set to doing or verifying")
             return 1
         return set_task(path, root, specs, text, data, tasks, target, value, commit)
     if target in acs:
@@ -487,13 +516,18 @@ def set_task(path, root, specs, text, data, tasks, tid, value, commit):
     if data.get("status") not in ("approved", "building", "review"):
         print("ERROR: feature status is '%s'; tasks are built after approval" % data.get("status"))
         return 1
-    open_blockers = [d for d in as_list(tasks[tid].get("blocked_by")) if tasks.get(d, {}).get("status") != "done"]
+    open_blockers = [d for d in as_list(tasks[tid].get("blocked_by")) if tasks.get(d, {}).get("status") not in STARTED]
     if open_blockers:
         print("ERROR: %s is blocked by %s" % (tid, ", ".join(open_blockers)))
         return 1
+    current = tasks[tid].get("status")
+    if current in STARTED or (value == "doing" and current == "doing"):
+        print("ERROR: %s is already %s" % (tid, current))
+        return 1
 
     sha = None
-    if value == "done":
+    if value == "verifying":
+        root = task_root(root, tasks[tid])
         if commit is None:
             try:
                 rel = os.path.relpath(specs, root).replace("\\", "/")
@@ -515,7 +549,8 @@ def set_task(path, root, specs, text, data, tasks, tid, value, commit):
             print("ERROR: commit %s not found" % commit)
             return 1
         for other_id, other in tasks.items():
-            if other_id != tid and other.get("sha") and head_sha(root, str(other["sha"])) == sha:
+            if (other_id != tid and other.get("sha") and task_root(root, other) == root
+                    and head_sha(root, str(other["sha"])) == sha):
                 print("ERROR: %s is already recorded for %s; commit this task first" % (sha, other_id))
                 return 1
 
@@ -537,12 +572,12 @@ def set_task(path, root, specs, text, data, tasks, tid, value, commit):
     if value == "doing":
         print("%s doing" % tid)
         return 0
-    print("%s done in %s" % (tid, sha))
+    print("%s verifying in %s: run its checks (`set <feature> AC<n> pass|fail`)" % (tid, sha))
     ready, _ = frontier([t for t in updated["tasks"] if isinstance(t, dict)])
     if ready:
         print("Next: " + ", ".join("%s %s" % (t.get("id"), t.get("title")) for t, _ in ready))
     else:
-        print("All tasks done: run the suite, then `review <feature>`.")
+        print("All tasks have a commit: run the suite, then `review <feature>`.")
     return 0
 
 
@@ -550,20 +585,42 @@ def set_check(path, text, data, tasks, ac, value):
     if data.get("status") not in ("building", "review"):
         print("ERROR: feature status is '%s'; checks are recorded while building or in review" % data.get("status"))
         return 1
-    open_tasks = [tid for tid, t in tasks.items() if ac in as_list(t.get("covers")) and t.get("status") != "done"]
+    open_tasks = [tid for tid, t in tasks.items() if ac in as_list(t.get("covers")) and t.get("status") not in STARTED]
     if open_tasks:
-        print("ERROR: %s is covered by open task %s" % (ac, ", ".join(open_tasks)))
+        print("ERROR: %s is covered by task %s, which has no commit yet (`set <feature> T<n> verifying`)"
+              % (ac, ", ".join(open_tasks)))
         return 1
+
+    checks = [c for c in as_list(data.get("checks")) if isinstance(c, dict)]
+    after = {}
+    for c in checks:
+        after.setdefault(c.get("ac"), []).append(value if c.get("ac") == ac else c.get("status"))
+    passed = {name for name, states in after.items() if all(s == "pass" for s in states)}
+    wanted = {}
+    for tid, t in tasks.items():
+        if t.get("status") in STARTED:
+            covers = as_list(t.get("covers"))
+            wanted[tid] = "done" if covers and all(c in passed for c in covers) else "verifying"
 
     def change(lines):
         blocks = item_blocks(lines, "ac", ac)
         assert blocks, "no '- ac: %s' line" % ac
         for start, end, indent in reversed(blocks):
             set_key(lines, start, end, indent, "status", value)
+        for tid, state in wanted.items():
+            start, end, indent = item_blocks(lines, "id", tid)[0]
+            set_key(lines, start, end, indent, "status", state)
 
-    edit(path, text, change,
-         lambda d: all(c.get("status") == value for c in d["checks"] if isinstance(c, dict) and c.get("ac") == ac))
+    def applied(d):
+        by_id = {t.get("id"): t for t in d["tasks"] if isinstance(t, dict)}
+        return (all(c.get("status") == value for c in d["checks"] if isinstance(c, dict) and c.get("ac") == ac)
+                and all(by_id[tid].get("status") == state for tid, state in wanted.items()))
+
+    edit(path, text, change, applied)
     print("%s %s" % (ac, value))
+    for tid, state in wanted.items():
+        if tasks[tid].get("status") != state:
+            print("%s %s" % (tid, state))
     return 0
 
 
@@ -575,9 +632,9 @@ def cmd_review(path, root, specs):
         print("ERROR: feature status is '%s'; review starts from building" % data.get("status"))
         return 1
     open_tasks = [str(t.get("id")) for t in as_list(data.get("tasks"))
-                  if isinstance(t, dict) and t.get("status") != "done"]
+                  if isinstance(t, dict) and t.get("status") not in STARTED]
     if open_tasks:
-        print("ERROR: tasks are open: %s" % ", ".join(open_tasks))
+        print("ERROR: tasks have no commit yet: %s" % ", ".join(open_tasks))
         return 1
     edit(path, text, lambda lines: set_top(lines, "status", "review"), lambda d: d.get("status") == "review")
     print("%s in review: diff since base %s" % (data.get("id"), data.get("base")))
@@ -712,7 +769,38 @@ def roadmap_status(rid, links):
     return folders[0][1] if folders else "planned"
 
 
-def cmd_roadmap(specs):
+def milestone_status(statuses):
+    if all(s == "planned" for s in statuses):
+        return "planned"
+    return "done" if all(s == "done" for s in statuses) else "building"
+
+
+def sync_roadmap(specs, data=None, links=None):
+    """Write the status of every roadmap feature and milestone into roadmap.yaml (nothing when it is invalid)."""
+    data = data or load_roadmap(specs)
+    if data is None:
+        return
+    links = links or linked_features(specs)
+    if validate_roadmap(data, links)[0]:
+        return
+    path = roadmap_path(specs)
+    text, _ = load(path)
+    wanted = {}
+    for milestone in as_list(data.get("milestones")):
+        fids = [str(f["id"]) for f in as_list(milestone.get("features"))]
+        states = [roadmap_status(f, links) for f in fids]
+        wanted[str(milestone["id"])] = milestone_status(states)
+        wanted.update(zip(fids, states))
+
+    def change(lines):
+        for ident, state in wanted.items():
+            start, end, indent = item_blocks(lines, "id", ident)[0]
+            set_key(lines, start, end, indent, "status", state, after="title")
+
+    edit(path, text, change, lambda d: True)
+
+
+def cmd_roadmap(specs, approve=False):
     data = load_roadmap(specs)
     if data is None:
         print("ERROR: %s does not exist" % roadmap_path(specs))
@@ -725,7 +813,14 @@ def cmd_roadmap(specs):
         print("ERROR: %s" % e)
     if errors:
         return 1
+    if approve:
+        today = datetime.date.today().isoformat()
+        text, _ = load(roadmap_path(specs))
+        edit(roadmap_path(specs), text, lambda lines: set_top(lines, "approved", today, after="vision"),
+             lambda d: str(d.get("approved")) == today)
+        print("Roadmap approved %s" % today)
 
+    sync_roadmap(specs, data, links)
     features = roadmap_features(data)
     status = {fid: roadmap_status(fid, links) for fid in features}
     for milestone in as_list(data.get("milestones")):
@@ -745,6 +840,97 @@ def cmd_roadmap(specs):
     return 0
 
 
+# ---------------------------------------------------------------- finding
+
+def cmd_finding(path, args):
+    text, data = load(path)
+    review = data.get("review") if isinstance(data.get("review"), dict) else {}
+    existing = as_list(review.get("findings"))
+    if args.none:
+        if existing:
+            print("ERROR: the review already has %d finding(s)" % len(existing))
+            return 1
+        item = None
+    else:
+        if not args.text or not args.action:
+            print("ERROR: a finding needs --text and --action (or use --none for a clean review)")
+            return 1
+        if args.action == "fix" and not args.task:
+            print("ERROR: a fix finding names the task that fixes it: --task T<n>")
+            return 1
+        if args.action == "wontfix" and not args.reason:
+            print("ERROR: a wontfix finding needs --reason")
+            return 1
+        item = ["    - text: %s\n" % json.dumps(args.text, ensure_ascii=False),
+                "      action: %s\n" % args.action]
+        if args.task:
+            item.append("      task: %s\n" % args.task)
+        if args.reason:
+            item.append("      reason: %s\n" % json.dumps(args.reason, ensure_ascii=False))
+
+    def change(lines):
+        top = next((i for i, l in enumerate(lines) if re.match(r"^review:(\s|$)", l)), None)
+        if top is None:
+            lines.append("review:\n")
+            top = len(lines) - 1
+        elif lines[top].split("#")[0].strip() != "review:":
+            lines[top] = "review:\n"
+        end = block_end(lines, top, 0)
+        found = next((i for i in range(top + 1, end) if re.match(r"^  findings:(\s|$)", lines[i])), None)
+        if found is None:
+            lines.insert(top + 1, "  findings:\n")
+            found = top + 1
+        elif lines[found].split("#")[0].strip() != "findings:":
+            lines[found] = "  findings:\n" if item else "  findings: []\n"
+        if item is None:
+            lines[found] = "  findings: []\n"
+            return
+        lines[block_end(lines, found, 2):block_end(lines, found, 2)] = item
+
+    edit(path, text, change, lambda d: len(as_list((d.get("review") or {}).get("findings"))) ==
+         len(existing) + (0 if item is None else 1))
+    print("%s: %s" % (data.get("id"), "clean review recorded" if item is None else "finding recorded"))
+    return 0
+
+
+# ---------------------------------------------------------------- new
+
+def cmd_new(specs, args):
+    folder = os.path.join(specs, "features", args.feature)
+    if os.path.exists(folder):
+        print("ERROR: %s already exists" % folder)
+        return 1
+    if args.roadmap:
+        data = load_roadmap(specs)
+        if data is None or args.roadmap not in roadmap_features(data):
+            print("ERROR: roadmap: %s is not a feature of %s" % (args.roadmap, roadmap_path(specs)))
+            return 1
+    fields = {"id": args.feature, "title": args.title}
+    if args.roadmap:
+        fields["roadmap"] = args.roadmap
+    if args.repo:
+        fields["repo"] = args.repo
+    fields.update(size=args.size, status="draft", approved={"spec": None, "tasks": None}, base=None)
+    if args.test:
+        fields["test"] = args.test
+    story = {k: [i.strip() for i in v.split(",") if i.strip()]
+             for k, v in (("decisions", args.decisions), ("validations", args.validations)) if v}
+    if story:
+        fields["story"] = story
+    fields.update(acceptance=[], tasks=[], checks=[])
+    os.makedirs(folder)
+    with open(os.path.join(folder, "feature.yaml"), "w", encoding="utf-8", newline="") as fh:
+        fh.write(yaml.safe_dump(fields, sort_keys=False, allow_unicode=True, default_flow_style=None))
+    template = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "templates", "spec.md")
+    with open(template, encoding="utf-8") as fh:
+        spec = fh.read().replace("{title}", args.title)
+    with open(os.path.join(folder, "spec.md"), "w", encoding="utf-8", newline="") as fh:
+        fh.write(spec)
+    sync_roadmap(specs)
+    print("Created %s: write the criteria in spec.md and feature.yaml, then `check`" % folder)
+    return 0
+
+
 # ---------------------------------------------------------------- main
 
 def main(argv=None):
@@ -761,22 +947,47 @@ def main(argv=None):
     set_ = sub.add_parser("set")
     set_.add_argument("feature")
     set_.add_argument("target", help="a task id (T1) or a criterion id (AC1)")
-    set_.add_argument("value", help="doing | done for a task, pass | fail for a criterion")
-    set_.add_argument("--commit", help="with done: record this commit instead of HEAD (for resume)")
-    sub.add_parser("roadmap")
+    set_.add_argument("value", help="doing | verifying for a task, pass | fail for a criterion")
+    set_.add_argument("--commit", help="with verifying: record this commit instead of HEAD (for resume)")
+    roadmap = sub.add_parser("roadmap")
+    roadmap.add_argument("--approve", action="store_true", help="stamp today as the approval date, once the roadmap is valid")
+    finding = sub.add_parser("finding")
+    finding.add_argument("feature")
+    finding.add_argument("--text")
+    finding.add_argument("--action", choices=("fix", "wontfix"))
+    finding.add_argument("--task", help="with fix: the task that fixes it")
+    finding.add_argument("--reason", help="with wontfix: why, as the user agreed")
+    finding.add_argument("--none", action="store_true", help="record a clean review (findings: [])")
+    new = sub.add_parser("new")
+    new.add_argument("feature", help="the folder name and id, e.g. F1.1-csv-export")
+    new.add_argument("--title", required=True)
+    new.add_argument("--size", required=True, choices=SIZES)
+    new.add_argument("--roadmap", help="the roadmap feature id this delivers")
+    new.add_argument("--repo", help="repo name, when the work is a /task story")
+    new.add_argument("--decisions", help="task decisions it builds on, comma separated")
+    new.add_argument("--validations", help="task validations that prove it, comma separated")
+    new.add_argument("--test", help="the whole-suite command")
     args = parser.parse_args(argv)
 
     root = os.path.abspath(args.root)
     specs = os.path.abspath(args.specs) if args.specs else default_specs(root)
     if args.command == "roadmap":
-        return cmd_roadmap(specs)
+        return cmd_roadmap(specs, args.approve)
+    if args.command == "new":
+        return cmd_new(specs, args)
     path = resolve(args.feature, specs)
+    if args.command == "finding":
+        return cmd_finding(path, args)
     if args.command == "approve":
-        return cmd_approve(path, root, specs, args.step)
-    if args.command == "set":
-        return cmd_set(path, root, specs, args.target, args.value, args.commit)
-    return {"status": cmd_status, "check": cmd_check, "review": cmd_review,
-            "finish": cmd_finish}[args.command](path, root, specs)
+        code = cmd_approve(path, root, specs, args.step)
+    elif args.command == "set":
+        code = cmd_set(path, root, specs, args.target, args.value, args.commit)
+    else:
+        code = {"status": cmd_status, "check": cmd_check, "review": cmd_review,
+                "finish": cmd_finish}[args.command](path, root, specs)
+    if code == 0 and args.command in ("approve", "set", "review", "finish"):
+        sync_roadmap(specs)
+    return code
 
 
 if __name__ == "__main__":

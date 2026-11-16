@@ -15,10 +15,11 @@ Steps for a fresh clone or a new machine. Each one can run again on a machine al
    for d in ~/Projects/skills/skills/*/; do n=$(basename "$d"); ln -sfn "${d%/}" ~/.claude/skills/"$n"; done
    ```
 
-3. Create the personal settings of `task` (gitignored; edit `home` if your central folder is elsewhere):
+3. Create the personal settings of `task` and `idea-triage` (gitignored; edit `home` if your home repo is elsewhere):
 
    ```sh
    cp -n ~/Projects/skills/skills/task/config.example.yaml ~/Projects/skills/skills/task/config.yaml
+   cp -n ~/Projects/skills/skills/idea-triage/config.example.yaml ~/Projects/skills/skills/idea-triage/config.yaml
    ```
 
 4. Create the personal settings of `retro-report` (gitignored; edit `retros` and `projects` if your retros and projects are elsewhere):

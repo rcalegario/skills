@@ -1,5 +1,5 @@
 ---
-id: <slug>
+id: <YYYY-MM-DD-HHMM>-<slug>
 title: "<title>"
 link: <link to the base text (issue, ticket, note); null when pasted>
 repos:
@@ -7,6 +7,7 @@ repos:
     origin: <path of the main checkout>
     worktree: repos/<repo>  # relative to this folder; null when none
     branch: <branch>
+    main: true              # on exactly one repo: the one whose name is the parent folder
 ---
 
 # <slug> <title>

@@ -1,11 +1,14 @@
 # acs.yaml - one entry per outcome (AC-n) and extra beyond the base text (X-n).
 # Each requirement is one verifiable thing and points to ONE root decision.
 # Optional per item: comment (how we read it), pr_note (text the PR must carry), status: dropped (X-n only).
+# `status` of items and requirements is written by `task.py sync`; never type it (except `dropped`).
 
 - id: AC-1
   text: "<outcome, verbatim from the base text when it has acceptance criteria>"
+  status: discovery           # written by task.py sync
   requirements:
     - id: AC-1.1
       text: "<one verifiable thing>"
+      status: discovery       # written by task.py sync
       decision: D-01
       validations: [V-01]
