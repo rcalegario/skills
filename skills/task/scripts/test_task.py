@@ -199,3 +199,11 @@ def test_a_closed_pending_item_cannot_be_closed_again(folder):
     assert run(folder, "close", "P-1") == 0
     assert run(folder, "close", "P-1", "--status", "dropped") == 1
     assert load(folder, "pending.yaml")[0]["status"] == "done"
+
+
+def test_validate_replaces_attachments_written_as_an_unindented_list(folder):
+    path = "validations/V-01-published.yaml"
+    write(folder, "validations/evidence/new.png", "png")
+    write(folder, path, text(folder, path) + "attachments:\n- old.png\n- older.png\n")
+    assert run(folder, "validate", "V-01", "--status", "passed", "--evidence", "Seen.", "--attach", "new.png") == 0
+    assert load(folder, path)["attachments"] == ["new.png"]

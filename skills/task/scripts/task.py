@@ -79,6 +79,8 @@ def put(lines, key, value, after=None):
     new = render(key, value)
     if start is not None:
         end = flow.block_end(lines, start, 0)
+        while end < len(lines) and re.match(r"^-(\s|$)", lines[end]):  # an unindented list belongs to its key
+            end = flow.block_end(lines, end, 0)
         comment = re.search(r"\s+#.*$", lines[start].rstrip("\n"))
         if comment and len(new) == 1 and end == start + 1:
             new[0] = new[0].rstrip("\n") + comment.group(0) + "\n"
