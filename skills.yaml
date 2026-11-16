@@ -67,6 +67,27 @@ own:
     test: ""
     references: []
 
+  - name: retro-report
+    test: uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts && claude plugin test mod
+    references:
+      - repo: https://github.com/mattpocock/skills
+        path: skills/engineering/retro
+        commit: 5863806dd4e1
+        relation: derived
+        took: The improvement categories a retro looks for and who fixes what, implementation or review
+      - repo: https://github.com/microsoft/TokenEconomizer
+        path: tokeneconomizer/trace
+        commit: 7042ea8
+        license: Apache-2.0
+        relation: inspired
+        took: Reading a Claude Code transcript as an ordered list of tool calls with their results
+      - repo: https://github.com/microsoft/TokenEconomizer
+        path: tokeneconomizer/microskills/observe.py
+        commit: 7042ea8
+        license: Apache-2.0
+        relation: inspired
+        took: Classifying a command's output into error classes by pattern
+
 installed:
   - name: agent-reach
     repo: https://github.com/Panniantong/Agent-Reach

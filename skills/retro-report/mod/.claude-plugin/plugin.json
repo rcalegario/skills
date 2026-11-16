@@ -1,0 +1,6 @@
+{
+  "name": "retro-report",
+  "version": "0.1.0",
+  "description": "Offers /retro-report in a band above the prompt once enough sessions wait for a retro",
+  "types": "./types/index.d.ts"
+}
