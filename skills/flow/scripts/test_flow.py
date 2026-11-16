@@ -254,6 +254,12 @@ def test_set_verifying_records_head_keeps_comments_and_moves_to_building(repo):
     assert run(repo, "check", "demo") == 0
 
 
+def test_set_verifying_quotes_the_sha_so_yaml_keeps_it_a_string(repo):
+    sha = commit(repo, "v2\n")
+    assert run(repo, "set", "demo", "T1", "verifying") == 0
+    assert '    sha: "%s"\n' % sha in feature(repo).read_text()
+
+
 def test_set_verifying_refuses_uncommitted_code(repo):
     (repo / "code.txt").write_text("dirty\n")
     assert run(repo, "set", "demo", "T1", "verifying") == 1

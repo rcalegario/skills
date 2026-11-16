@@ -579,7 +579,8 @@ def set_task(path, root, specs, text, data, tasks, tid, value, commit):
         start, end, indent = blocks[0]
         end += set_key(lines, start, end, indent, "status", value)
         if sha:
-            set_key(lines, start, end, indent, "sha", sha, after="status")
+            # Quoted: a short sha of octal digits with a leading 0 would load as a number.
+            set_key(lines, start, end, indent, "sha", '"%s"' % sha, after="status")
         if data.get("status") == "approved":
             set_top(lines, "status", "building")
 
