@@ -423,7 +423,7 @@ def report(retro, digests, statuses):
 
 
 def load_config(path):
-    """retros, projects and threshold (default 10) from config.yaml, ~ expanded, with one line per problem."""
+    """retros, projects and threshold from config.yaml, ~ expanded, with one line per problem."""
     errors = []
     cfg = _load(path, errors)
     if not errors:
@@ -432,15 +432,14 @@ def load_config(path):
         else:
             _field(cfg, "retros", _is_text, "must be a path", errors)
             _field(cfg, "projects", lambda v: _is_text_list(v) and v, "must be a list of paths", errors)
-            _field(cfg, "threshold", lambda v: type(v) is int and v > 0, "must be a positive whole number", errors,
-                   required=False)
+            _field(cfg, "threshold", lambda v: type(v) is int and v > 0, "must be a positive whole number", errors)
             if _is_text(cfg.get("retros")) and not Path(cfg["retros"]).expanduser().is_dir():
                 errors.append(f"retros: {Path(cfg['retros']).expanduser()} is not a folder")
     if errors:
         return None, [f"{path}: {e.removeprefix(path.name + ': ')}; see config.example.yaml" for e in errors]
     return {"retros": Path(cfg["retros"]).expanduser(),
             "projects": [Path(p).expanduser() for p in cfg["projects"]],
-            "threshold": cfg.get("threshold", 10)}, []
+            "threshold": cfg["threshold"]}, []
 
 
 def read_retros(cfg):

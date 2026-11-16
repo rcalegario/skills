@@ -398,13 +398,13 @@ def session_log(home, folder, sid, mtime):
     return path
 
 
-def pending(tmp_path, capsys, monkeypatch, current=None):
+def pending(tmp_path, capsys, monkeypatch, current=None, cmd="pending"):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     if current:
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", current)
     else:
         monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
-    return run(capsys, "--config", str(tmp_path / "config.yaml"), "pending")
+    return run(capsys, "--config", str(tmp_path / "config.yaml"), cmd)
 
 
 def test_pending_lists_project_sessions(tmp_path, capsys, monkeypatch):
@@ -531,9 +531,7 @@ def test_config_retros_must_exist(tmp_path, capsys):
 
 
 def due(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
-    return run(capsys, "--config", str(tmp_path / "config.yaml"), "due")
+    return pending(tmp_path, capsys, monkeypatch, cmd="due")
 
 
 def test_due_at_threshold(tmp_path, capsys, monkeypatch):
@@ -544,11 +542,7 @@ def test_due_at_threshold(tmp_path, capsys, monkeypatch):
     assert due(tmp_path, capsys, monkeypatch) == (0, "2\n", "")
 
 
-def test_due_threshold_default_and_wrong(tmp_path, capsys, monkeypatch):
-    config(tmp_path, threshold=None)
-    for n in range(10):
-        session_log(tmp_path / "home", "-work-repo", f"s-{n}", 100 + n)
-    assert due(tmp_path, capsys, monkeypatch) == (0, "10\n", "")
-    path = config(tmp_path, threshold=0)
-    assert due(tmp_path, capsys, monkeypatch) == (
-        1, "", f"{path}: threshold: must be a positive whole number; see config.example.yaml\n")
+def test_due_threshold_missing_or_wrong(tmp_path, capsys, monkeypatch):
+    for value, problem in ((None, "missing"), (0, "must be a positive whole number")):
+        path = config(tmp_path, threshold=value)
+        assert due(tmp_path, capsys, monkeypatch) == (1, "", f"{path}: threshold: {problem}; see config.example.yaml\n")

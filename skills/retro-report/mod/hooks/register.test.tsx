@@ -18,7 +18,7 @@ const BAND = {
 type Run = { exitCode: number; stdout: string; stderr: string }
 
 // Stands for the engine: HOME, the script's answer, toasts and the commands run.
-function engine(on: On, run: Run | Error) {
+function engine(on: On, run: Run | Error, command: Error | null = null) {
   const seen = { argv: [] as readonly string[], toasts: [] as string[], commands: [] as string[] }
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('env.get', () => ({ value: '/home/me' }))
@@ -33,6 +33,7 @@ function engine(on: On, run: Run | Error) {
   })
   on('command.run', (_, e) => {
     seen.commands.push(e.command)
+    if (command) throw command
     return {}
   })
   return seen
@@ -97,5 +98,25 @@ test('python3 missing draws no band and says why in one toast', async ($, on) =>
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /sessions wait/ })).toBeUndefined()
   expect(seen.toasts).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a report that cannot start brings the band back and says why in a toast', async ($, on) => {
+  const seen = engine(on, { exitCode: 0, stdout: '12\n', stderr: '' }, new Error('unknown command'))
+  await $.session.start(start)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'generate' })
+  expect(seen.toasts).toHaveLength(1)
+  expect(seen.toasts[0]).toMatch(/^retro-report: /)
+  expect(await ui.find({ type: 'Text', text: /sessions wait/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a count due cannot read draws no band and says why in a toast', async ($, on) => {
+  const seen = engine(on, { exitCode: 0, stdout: 'twelve\n', stderr: '' })
+  await $.session.start(start)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /sessions wait/ })).toBeUndefined()
+  expect(seen.toasts).toEqual(['retro-report: retro.py due printed "twelve", not a count'])
   await ui.unmount()
 })
