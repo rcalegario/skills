@@ -23,7 +23,8 @@ Every status change, the roadmap approval and the feature skeleton go through th
 | Starting a task | `set <feature> T<n> doing` |
 | The task's commit is made | `set <feature> T<n> verifying` (records `HEAD`; `--commit <sha>` on resume) |
 | A criterion's checks ran | `set <feature> AC<n> pass\|fail`: a task turns `done` when every check of the criteria it covers passes, and goes back to `verifying` when one fails |
-| A review finding (or a clean review) | `finding <feature> --text T --action fix --task T<n>`, `--action wontfix --reason R`, or `--none` |
+| A review finding (or a clean review) | `finding <feature> --text T --source S --action fix --task T<n>`, `--action wontfix --reason R`, or `--none`. `S` is `spec-review`, `standards-review`, `pr-comment` (add `--comment-id N`, the GitHub comment id) or `user` |
+| The feature's PR is open | `pr <feature> --url U` |
 | Every task committed (`verifying` or `done`) | `review <feature>` |
 | Every check `pass` and the review recorded | `finish <feature>` |
 | Resuming, or "where are we" | `roadmap`, `status <feature>` |
@@ -74,6 +75,8 @@ Any change to the roadmap (a split at SIZE, a feature added or dropped) is propo
 | **L** | several components or an architectural decision | `spec.md` + `feature.yaml`, `design.md` when a choice needs explaining | by default | two (spec, then tasks) | suite, checks, review |
 
 An S plan that grows past 3 steps becomes M.
+
+**One feature, one small PR.** A feature is delivered by one PR, and it stays within the size the project recommends (its `CONTRIBUTING.md`; without one, the limit in the `task` skill's `fallback/contributing.md`). When the diff would pass it, split the feature at SIZE, or stack PRs. This skill does not repeat the number: read it from that source.
 
 **Escalate** when any of these shows up, at sizing or once the task list is drafted:
 
@@ -197,15 +200,22 @@ checks:
 deferred:                      # ideas that came up and are out of this feature
   - Choose the delimiter.
 
+pr: https://github.com/acme/app/pull/42   # written by `pr`, once the PR is open
+
 review:                        # filled at CLOSE
   findings:
     - text: AC2 test does not cover a quote inside a value
       action: fix              # fix | wontfix
       task: T3                 # fix → the task that fixes it
+      source: spec-review      # spec-review | standards-review | pr-comment | user
     - text: Rename writer module
       action: wontfix
       reason: Matches the existing naming.
+      source: pr-comment
+      comment_id: 2201         # pr-comment → the GitHub comment id; one finding per comment
 ```
+
+A finding without `source` (older features) is accepted with a warning.
 
 `spec.md` holds the rest: Problem, Assumptions, Out of scope and Notes (decisions taken along the way; for M, the design in a few lines). `check` refuses an approved M or L feature whose `spec.md` is missing or still has a `TODO`.
 
@@ -243,7 +253,7 @@ M and L:
    - **Standards**: breaches of the project's documented standards (its `CLAUDE.md` / `AGENTS.md` files and coding-standards docs).
 
    Invoke the `code-review` skill with `base` and the paths to `spec.md` and `feature.yaml` when it is available; otherwise dispatch two sub-agents in parallel, one per axis, each given the diff command and its sources, each reporting in under 400 words with a quote or `file:line` per finding.
-4. Record every finding with `flow.py finding <feature> --text T --action fix --task T<n>` or `--action wontfix --reason R`, and a clean review with `finding <feature> --none`. A `fix` adds a task (same BUILD loop); a `wontfix` carries a `reason` the user agreed to. One round: after the fixes, run the suite again, and there is no second review.
+4. Record every finding with `flow.py finding <feature> --text T --source S --action fix --task T<n>` or `--action wontfix --reason R`, and a clean review with `finding <feature> --none`. Comments left on the PR are findings too: read them (`gh api repos/<owner>/<repo>/pulls/<n>/comments`, and `issues/<n>/comments` for general ones), and record each with `--source pr-comment --comment-id <id>`. A `fix` adds a task (same BUILD loop); a `wontfix` carries a `reason` the user agreed to. One round: after the fixes, run the suite again, and there is no second review.
 5. **Manual checks.** Present the `manual` checks as a numbered checklist with their steps, and wait. Record each one with `set <feature> AC<n> pass|fail` as the user reports. A `fail` is fixed (a task, same loop) and checked again.
 6. `finish <feature>`: it refuses while a task is not `done`, a check is not `pass`, or the review is missing.
 

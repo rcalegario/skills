@@ -595,11 +595,11 @@ def findings(root):
 
 
 def test_finding_creates_the_review_block_and_appends(repo):
-    assert run(repo, "finding", "demo", "--text", "AC2 test misses a quote", "--action", "fix", "--task", "T3") == 0
-    assert run(repo, "finding", "demo", "--text", "Rename writer", "--action", "wontfix", "--reason", "Matches naming") == 0
+    assert run(repo, "finding", "demo", "--text", "AC2 test misses a quote", "--action", "fix", "--task", "T3", "--source", "spec-review") == 0
+    assert run(repo, "finding", "demo", "--text", "Rename writer", "--action", "wontfix", "--reason", "Matches naming", "--source", "standards-review") == 0
     assert findings(repo) == [
-        {"text": "AC2 test misses a quote", "action": "fix", "task": "T3"},
-        {"text": "Rename writer", "action": "wontfix", "reason": "Matches naming"}]
+        {"text": "AC2 test misses a quote", "action": "fix", "task": "T3", "source": "spec-review"},
+        {"text": "Rename writer", "action": "wontfix", "reason": "Matches naming", "source": "standards-review"}]
     assert "status: approved   # keep this comment" in feature(repo).read_text()
 
 
@@ -609,21 +609,93 @@ def test_finding_none_records_a_clean_review(repo):
 
 
 def test_finding_none_is_refused_when_findings_exist(repo):
-    run(repo, "finding", "demo", "--text", "x", "--action", "wontfix", "--reason", "y")
+    run(repo, "finding", "demo", "--text", "x", "--action", "wontfix", "--reason", "y", "--source", "user")
     assert run(repo, "finding", "demo", "--none") == 1
     assert len(findings(repo)) == 1
 
 
 @pytest.mark.parametrize("extra", [["--action", "fix"], ["--action", "wontfix"]])
 def test_finding_needs_its_task_or_reason(repo, extra):
-    assert run(repo, "finding", "demo", "--text", "x", *extra) == 1
+    assert run(repo, "finding", "demo", "--text", "x", "--source", "user", *extra) == 1
     assert findings(repo) is None
 
 
 def test_finding_appends_to_an_empty_list(repo):
     run(repo, "finding", "demo", "--none")
-    assert run(repo, "finding", "demo", "--text", "x", "--action", "wontfix", "--reason", "y") == 0
+    assert run(repo, "finding", "demo", "--text", "x", "--action", "wontfix", "--reason", "y", "--source", "user") == 0
     assert len(findings(repo)) == 1
+
+
+def wontfix(repo, *extra):
+    return run(repo, "finding", "demo", "--text", "x", "--action", "wontfix", "--reason", "y", *extra)
+
+
+def test_finding_records_the_pr_comment_and_its_id(repo):
+    assert wontfix(repo, "--source", "pr-comment", "--comment-id", "2201") == 0
+    assert findings(repo) == [{"text": "x", "action": "wontfix", "reason": "y",
+                               "source": "pr-comment", "comment_id": 2201}]
+
+
+def test_finding_needs_a_known_source(repo):
+    assert wontfix(repo) == 1
+    with pytest.raises(SystemExit):
+        wontfix(repo, "--source", "gossip")
+    assert findings(repo) is None
+
+
+def test_finding_pr_comment_needs_its_id_and_only_it(repo):
+    assert wontfix(repo, "--source", "pr-comment") == 1
+    assert wontfix(repo, "--source", "user", "--comment-id", "7") == 1
+    assert findings(repo) is None
+
+
+def test_finding_refuses_a_comment_already_recorded(repo):
+    assert wontfix(repo, "--source", "pr-comment", "--comment-id", "2201") == 0
+    assert wontfix(repo, "--source", "pr-comment", "--comment-id", "2201") == 1
+    assert len(findings(repo)) == 1
+
+
+REVIEWED = FEATURE + "review:\n  findings:\n%s"
+
+
+def test_check_warns_on_a_finding_without_source_and_accepts_it(repo, capsys):
+    code, out = check_output(repo, capsys, REVIEWED % "    - text: a\n      action: wontfix\n      reason: r\n")
+    assert code == 0 and "source" in out
+
+
+def test_check_rejects_a_bad_source_and_a_pr_comment_without_id(repo, capsys):
+    code, out = check_output(repo, capsys, REVIEWED % (
+        "    - {text: a, action: wontfix, reason: r, source: gossip}\n"
+        "    - {text: b, action: wontfix, reason: r, source: pr-comment}\n"))
+    assert code == 1
+    assert "source must be one of" in out
+    assert "pr-comment without a 'comment_id'" in out
+
+
+def test_check_rejects_the_same_comment_twice(repo, capsys):
+    code, out = check_output(repo, capsys, REVIEWED % (
+        "    - {text: a, action: wontfix, reason: r, source: pr-comment, comment_id: 5}\n"
+        "    - {text: b, action: wontfix, reason: r, source: pr-comment, comment_id: 5}\n"))
+    assert code == 1 and "comment_id 5 is recorded twice" in out
+
+
+# ---------------------------------------------------------------- pr
+
+def test_pr_records_the_url_and_replaces_it(repo):
+    assert run(repo, "pr", "demo", "--url", "https://github.com/o/r/pull/1") == 0
+    assert run(repo, "pr", "demo", "--url", "https://github.com/o/r/pull/2") == 0
+    assert data(repo)["pr"] == "https://github.com/o/r/pull/2"
+    assert "status: approved   # keep this comment" in feature(repo).read_text()
+
+
+def test_pr_refuses_what_is_not_a_url(repo):
+    assert run(repo, "pr", "demo", "--url", "pull 1") == 1
+    assert "pr" not in data(repo)
+
+
+def test_check_rejects_a_pr_that_is_not_a_url(repo, capsys):
+    code, out = check_output(repo, capsys, FEATURE + "pr: pull 1\n")
+    assert code == 1 and "'pr' must be a URL" in out
 
 
 # ---------------------------------------------------------------- task state machine

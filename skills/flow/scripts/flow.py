@@ -9,8 +9,9 @@ Commands:
                                             start a task, or record its commit (HEAD by default): it then waits for its checks
   set     <feature> AC<n> pass|fail         record the result of a criterion's checks; a task is done once every
                                             check of the criteria it covers passes (never set by hand)
-  finding <feature> --text T --action fix --task T3 | --action wontfix --reason R | --none
+  finding <feature> --text T --source S [--comment-id N] --action fix --task T3 | --action wontfix --reason R | --none
                                             record a review finding (or a clean review)
+  pr      <feature> --url U                 record the pull request that delivers the feature
   review  <feature>                         every task verifying or done: building -> review
   finish  <feature>                         every check pass and review recorded: review -> done
   roadmap [--approve]                       validate <specs>/roadmap.yaml, write the status of every feature and milestone
@@ -45,6 +46,7 @@ TASK_STATUSES = ("todo", "doing", "verifying", "done")
 STARTED = ("verifying", "done")        # a task whose commit exists
 CHECK_STATUSES = ("pending", "pass", "fail")
 ACTIONS = ("fix", "wontfix")
+SOURCES = ("spec-review", "standards-review", "pr-comment", "user")
 MAX_TASKS = 8
 
 
@@ -232,6 +234,7 @@ def validate(data, root, specs=None, folder=None):
 
     review = data.get("review")
     findings = as_list(review.get("findings")) if isinstance(review, dict) else []
+    seen_comments = set()
     for i, finding in enumerate(findings):
         if not isinstance(finding, dict) or not str(finding.get("text") or "").strip():
             err("review.findings[%d] needs 'text'" % i)
@@ -243,6 +246,22 @@ def validate(data, root, specs=None, folder=None):
             err("review.findings[%d] is a fix without an existing 'task'" % i)
         elif action == "wontfix" and not str(finding.get("reason") or "").strip():
             err("review.findings[%d] is a wontfix without a 'reason'" % i)
+        source = finding.get("source")
+        if source is None:
+            warn("review.findings[%d] has no 'source' (%s)" % (i, ", ".join(SOURCES)))
+        elif source not in SOURCES:
+            err("review.findings[%d] source must be one of %s" % (i, ", ".join(SOURCES)))
+        elif source == "pr-comment" and not finding.get("comment_id"):
+            err("review.findings[%d] is a pr-comment without a 'comment_id'" % i)
+        cid = finding.get("comment_id")
+        if cid is not None:
+            if cid in seen_comments:
+                err("comment_id %s is recorded twice" % cid)
+            seen_comments.add(cid)
+
+    pr = data.get("pr")
+    if pr is not None and not re.match(r"^https?://\S+$", str(pr)):
+        err("'pr' must be a URL")
 
     if status == "done":
         err_list = finish_blockers(data)
@@ -861,12 +880,28 @@ def cmd_finding(path, args):
         if args.action == "wontfix" and not args.reason:
             print("ERROR: a wontfix finding needs --reason")
             return 1
+        if not args.source:
+            print("ERROR: a finding needs --source (%s)" % ", ".join(SOURCES))
+            return 1
+        if args.source == "pr-comment" and not args.comment_id:
+            print("ERROR: a pr-comment finding needs --comment-id")
+            return 1
+        if args.comment_id and args.source != "pr-comment":
+            print("ERROR: --comment-id only goes with --source pr-comment")
+            return 1
+        if args.comment_id and any(isinstance(f, dict) and str(f.get("comment_id")) == str(args.comment_id)
+                                   for f in existing):
+            print("ERROR: comment %s is already recorded" % args.comment_id)
+            return 1
         item = ["    - text: %s\n" % json.dumps(args.text, ensure_ascii=False),
                 "      action: %s\n" % args.action]
         if args.task:
             item.append("      task: %s\n" % args.task)
         if args.reason:
             item.append("      reason: %s\n" % json.dumps(args.reason, ensure_ascii=False))
+        item.append("      source: %s\n" % args.source)
+        if args.comment_id:
+            item.append("      comment_id: %d\n" % args.comment_id)
 
     def change(lines):
         top = next((i for i, l in enumerate(lines) if re.match(r"^review:(\s|$)", l)), None)
@@ -890,6 +925,18 @@ def cmd_finding(path, args):
     edit(path, text, change, lambda d: len(as_list((d.get("review") or {}).get("findings"))) ==
          len(existing) + (0 if item is None else 1))
     print("%s: %s" % (data.get("id"), "clean review recorded" if item is None else "finding recorded"))
+    return 0
+
+
+# ---------------------------------------------------------------- pr
+
+def cmd_pr(path, url):
+    if not re.match(r"^https?://\S+$", url):
+        print("ERROR: --url must be the pull request URL")
+        return 1
+    text, data = load(path)
+    edit(path, text, lambda lines: set_top(lines, "pr", url), lambda d: d.get("pr") == url)
+    print("%s: pr recorded" % data.get("id"))
     return 0
 
 
@@ -958,6 +1005,11 @@ def main(argv=None):
     finding.add_argument("--task", help="with fix: the task that fixes it")
     finding.add_argument("--reason", help="with wontfix: why, as the user agreed")
     finding.add_argument("--none", action="store_true", help="record a clean review (findings: [])")
+    finding.add_argument("--source", choices=SOURCES, help="where the finding comes from")
+    finding.add_argument("--comment-id", type=int, help="with pr-comment: the id of the PR comment")
+    pr = sub.add_parser("pr")
+    pr.add_argument("feature")
+    pr.add_argument("--url", required=True, help="the pull request that delivers the feature")
     new = sub.add_parser("new")
     new.add_argument("feature", help="the folder name and id, e.g. F1.1-csv-export")
     new.add_argument("--title", required=True)
@@ -978,6 +1030,8 @@ def main(argv=None):
     path = resolve(args.feature, specs)
     if args.command == "finding":
         return cmd_finding(path, args)
+    if args.command == "pr":
+        return cmd_pr(path, args.url)
     if args.command == "approve":
         code = cmd_approve(path, root, specs, args.step)
     elif args.command == "set":

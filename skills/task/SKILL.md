@@ -184,8 +184,8 @@ Done when `status.py --gate pr` has no failures.
 ## pr
 
 1. Collect the material: `status.py --pr-notes`, BRIEF-3 Path, the repo's PR template (`.github/pull_request_template.md` or the one its docs name; fallback `<skill-dir>/fallback/pull_request_template.md`) and its title and branch rules (fallback `<skill-dir>/fallback/contributing.md`).
-2. Compose the title and the body on that template, in English, with no task ids. Show both to the user and wait for approval.
-3. After approval: push the branch from the worktree and run `gh pr create --draft` with that body. Add the PR link with `task.py journal`; when the base text is an issue or ticket, offer a comment with the link there.
+2. Compose the title and the body on that template, in English, with no task ids. Say how many lines the diff changes against the repo's PR size limit, and propose a split when it passes. Show both to the user and wait for approval.
+3. After approval: push the branch from the worktree and run `gh pr create --draft` with that body. Record the link on each feature the PR delivers with `flow.py pr <feature> --url U` (same `--root` and `--specs`), and add it with `task.py journal`; when the base text is an issue or ticket, offer a comment with the link there.
 
 ## finish
 
