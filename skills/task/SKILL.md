@@ -76,7 +76,8 @@ Either way `/task <slug>` resumes the same way, and task-folder commits go to th
 ## Ground rules
 
 - **Facts are looked up, decisions are asked, unknowns are spiked.** Read the code, the base text and the docs yourself (sub-agents for broad reads) and write what you learn into `context/`. Put to the user only the choices that are theirs. When neither the facts nor the user can pick an option without trying it, propose a spike.
-- **Outbound needs a yes.** A comment on an issue or ticket, a push, a PR and removing a worktree each wait for the user to approve the exact action in this conversation.
+- **Outbound needs a yes.** A comment on an issue or ticket, a push, a PR and removing a worktree each wait for the user to approve the exact action in this conversation (**outbound** format).
+- **One approval format.** Every stop that waits for the user's yes uses the skeleton and the type named at that stop, from `~/.claude/skills/flow/reference/approvals.md`.
 - **Ids stay in the task folder.** Code, code comments, commits and the PR body explain the reason in words, without `D-nn`, `NOW-n` or other task ids.
 - **Project conventions first.** Commits, branch names, the PR title and the PR body follow what the repo documents (`CONTRIBUTING.md`, its `AGENTS.md` / `CLAUDE.md`, a PR template under `.github/` or `docs/`). For each topic the repo leaves undocumented, use `<skill-dir>/fallback/contributing.md`, and `<skill-dir>/fallback/pull_request_template.md` when it has no PR template. Say in one line which fallback you used.
 - **Every change is versioned.** After each change: `task.py journal` (each `task.py` command already runs the `status.py` checks; after a hand edit run `status.py`), then commit the task folder in the home repo (`git -C <home> add <task> && git -C <home> commit`) with a conventional title naming the task and the ids (`docs(ponto-export-csv): decide D-07 PR lock`).
@@ -89,7 +90,7 @@ Runs when `/task <slug>` finds no task folder.
 2. **Repos.** Ask which repos the work changes, proposing the most likely ones, and which is the main one. Create `<task>` now with the current date and time (`date +%Y-%m-%d-%H%M`) under the main repo's folder. For each repo, create a worktree inside the task folder: `git -C <origin> worktree add <task>/repos/<repo> -b <branch>`, with the branch named by the repo's convention (fallback `<type>/<slug>`). For a repo whose checkout is large (hundreds of MB), propose `git sparse-checkout set <dirs>` on the worktree, with only the folders the work touches. Read each repo's `AGENTS.md` / `CLAUDE.md` now: they do not load on their own from here.
 3. **Folder.** Create it from the templates: `README.md` (the base text verbatim, with its link; the problem, who it serves, what stays out), empty `pending.yaml` and `journal.yaml` (`[]`), then `task.py journal` for J-001. Fill `repos:` in the README header, with `main: true` on the main repo.
 4. **Facts.** Read the code the work touches and write `context/now.md` with code `NOW`: facts only, each section with an id, the current flow or structure drawn where it is the point (call tree, file tree, Mermaid).
-5. **Items.** Propose, in one message, the split of every outcome from step 1 (written as `AC-n`; anything beyond the base text as `X-n`) into requirements, with a first root decision for each. Write `acs.yaml`, the root decisions (`open` or `proposed`) and their validations only after the user confirms the split, then run `task.py sync` to fill the statuses.
+5. **Items.** Propose, in one message (**plan** format), the split of every outcome from step 1 (written as `AC-n`; anything beyond the base text as `X-n`) into requirements, with a first root decision for each. Write `acs.yaml`, the root decisions (`open` or `proposed`) and their validations only after the user confirms the split, then run `task.py sync` to fill the statuses.
 6. Run `status.py`, commit, and continue with **decide**.
 
 Done when `status.py` has no failures and every requirement has a root decision and a validation.
@@ -114,15 +115,7 @@ Say in one line where the task stands and which step you are taking.
 
 ## decide
 
-Work the decision tree in **rounds**. The **frontier** is every decision whose prerequisites are settled. A round asks the whole frontier at once, then waits:
-
-```
-❓ **Q1 - D-07 <title>**: <the question, its options, the facts that matter (with context ids)>
-
-➡️ <recommended answer>
-```
-
-Word each question so "yes" accepts the recommendation. A question whose answer depends on another still open in this round waits for the next round.
+Work the decision tree in **rounds**. The **frontier** is every decision whose prerequisites are settled. A round asks the whole frontier at once, in the **question** format, then waits. A question whose answer depends on another still open in this round waits for the next round.
 
 After each answer, in the same turn:
 
@@ -131,7 +124,7 @@ After each answer, in the same turn:
 - add the actions with other people with `task.py new pending`;
 - `task.py journal`, commit.
 
-When a question needs an experiment to answer (a combination nobody has tried, a behaviour only a real environment shows), propose a spike in the round instead of a choice: `➡️ keep <option> as the working hypothesis; spike V-nn on <where> settles it`. On a yes, set the decision `proposed` with the hypothesis in `decision`, and write the spike from `<skill-dir>/templates/validation.yaml` with `decides: [D-nn]`, the paths to compare in `how` and what to record. Its children wait until the spike settles it.
+When a question needs an experiment to answer (a combination nobody has tried, a behaviour only a real environment shows), propose a spike in the round instead of a choice (the spike answer of the **question** format). On a yes, set the decision `proposed` with the hypothesis in `decision`, and write the spike from `<skill-dir>/templates/validation.yaml` with `decides: [D-nn]`, the paths to compare in `how` and what to record. Its children wait until the spike settles it.
 
 A new question raised at any step is a new decision: place it in the tree (requirement root, or `born_from`) and ask it in the next round. When a decision changes course, supersede it (`format.md`, Decisions).
 
@@ -167,7 +160,7 @@ Build each feature with `/flow` BUILD, with the same `--root` and `--specs`, aft
 
 Runs when a spike blocks the next feature, or on `spike [V-nn]`.
 
-1. Pick the spike from **Spikes** in `status.py`. Say where it runs and what it needs (environment, snapshot, files). Ask before anything that touches a shared environment.
+1. Pick the spike from **Spikes** in `status.py`. Say where it runs and what it needs (environment, snapshot, files). Ask before anything that touches a shared environment (**outbound** format).
 2. When the user can run it here, run its `how` step by step and record the output. When it needs someone else or an environment out of reach, add a `P-n` to `pending.yaml` with the steps, and work on features the spike does not block.
 3. Record it with `task.py validate V-nn --status passed|failed --evidence E --attach f`. `passed` when it answered the question, `failed` when it was inconclusive (say what to change and run again).
 4. Settle each decision in `decides` with `task.py decide` (`--why` citing the spike), or `supersede` it when the evidence points elsewhere. Create the child decisions the answer opens, and update the feature's goal in `roadmap.yaml` when the path changed.
@@ -175,8 +168,8 @@ Runs when a spike blocks the next feature, or on `spike [V-nn]`.
 
 ## review
 
-1. Run every pending validation the user can run now and record each with `task.py validate`. Ask before anything that touches a shared environment.
-2. Run `status.py --gate pr`. Each item not `concluded` gets a `pr_note` the user agrees to (why it stays open, where it will be proven), or goes back to the step it needs.
+1. Run every pending validation the user can run now and record each with `task.py validate`. Ask before anything that touches a shared environment (**outbound** format).
+2. Run `status.py --gate pr`. Each item not `concluded` gets a `pr_note` the user agrees to (**question** format: why it stays open, where it will be proven), or goes back to the step it needs.
 3. Run `/flow` CLOSE on every feature not yet `done`: its checks prove the code; the validations here prove the story.
 
 Done when `status.py --gate pr` has no failures.
@@ -184,9 +177,9 @@ Done when `status.py --gate pr` has no failures.
 ## pr
 
 1. Collect the material: `status.py --pr-notes`, BRIEF-3 Path, the repo's PR template (`.github/pull_request_template.md` or the one its docs name; fallback `<skill-dir>/fallback/pull_request_template.md`) and its title and branch rules (fallback `<skill-dir>/fallback/contributing.md`).
-2. Compose the title and the body on that template, in English, with no task ids. Say how many lines the diff changes against the repo's PR size limit, and propose a split when it passes. Show both to the user and wait for approval.
-3. After approval: push the branch from the worktree and run `gh pr create --draft` with that body. Record the link on each feature the PR delivers with `flow.py pr <feature> --url U` (same `--root` and `--specs`), and add it with `task.py journal`; when the base text is an issue or ticket, offer a comment with the link there.
+2. Compose the title and the body on that template, in English, with no task ids. Say how many lines the diff changes against the repo's PR size limit, and propose a split when it passes. Show both in the **outbound** format (the push and `gh pr create` as the action, title and body as the payload) and wait for approval.
+3. After approval: push the branch from the worktree and run `gh pr create --draft` with that body. Record the link on each feature the PR delivers with `flow.py pr <feature> --url U` (same `--root` and `--specs`), and add it with `task.py journal`; when the base text is an issue or ticket, offer a comment with the link there (**outbound** format).
 
 ## finish
 
-After the PR is merged: for each repo in the README, offer `git -C <origin> worktree remove <task>/repos/<repo>` and `git -C <origin> branch -d <branch>`. Clear `worktree` in the README header, journal, commit. The task folder stays in the home.
+After the PR is merged: for each repo in the README, offer (**outbound** format) `git -C <origin> worktree remove <task>/repos/<repo>` and `git -C <origin> branch -d <branch>`. Clear `worktree` in the README header, journal, commit. The task folder stays in the home.
