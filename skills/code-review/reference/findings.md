@@ -8,7 +8,7 @@ Every sub-agent reports findings in this shape, so the report is uniform and a c
 - [<severity>, <confidence>] <file>:<line> - <what is wrong>. Hunk: `<the quoted line or lines>`. Fix: <what to change>. Source: <source>
 ```
 
-- `<file>:<line>` points at the changed line in the diff. For a requirement that is **missing**, there is no line: write `-` for the file and quote the spec line in `Hunk`.
+- `<file>:<line>` is the line number in the file as it stands at `HEAD` (what `cat -n` shows), never a line inside a diff hunk. For a requirement that is **missing**, there is no line: write `-` for the file and quote the spec line in `Hunk`.
 - `Hunk` quotes the code (or, for a missing requirement, the spec text) so the reader can check the claim without opening the file.
 - `Fix` is a suggestion in one sentence; the skill never applies it.
 
