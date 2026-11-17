@@ -16,7 +16,7 @@ SHA = re.compile(r"^[0-9a-f]{7,40}$")
 
 
 def load(root):
-    return yaml.safe_load((root / "skills.yaml").read_text()) or {}
+    return yaml.safe_load((root / "skills.yaml").read_text(encoding="utf-8")) or {}
 
 
 def own_entries(manifest):
@@ -100,7 +100,7 @@ def replace_credits(readme, section):
 
 
 def credits_errors(root, manifest):
-    readme = (root / "README.md").read_text() if (root / "README.md").exists() else ""
+    readme = (root / "README.md").read_text(encoding="utf-8") if (root / "README.md").exists() else ""
     expected = replace_credits(readme, credits(manifest))
     if expected is None:
         return [f"README.md: no {START} / {END} markers for the credits"]
@@ -153,11 +153,11 @@ def main(argv=None):
             print(section)
             return 0
         readme_path = args.root / "README.md"
-        updated = replace_credits(readme_path.read_text(), section)
+        updated = replace_credits(readme_path.read_text(encoding="utf-8"), section)
         if updated is None:
             print(f"README.md: add {START} and {END} where the credits go", file=sys.stderr)
             return 1
-        readme_path.write_text(updated)
+        readme_path.write_text(updated, encoding="utf-8", newline="\n")
         return 0
     if args.cmd == "test-cmd":
         for entry in own_entries(load(args.root)):

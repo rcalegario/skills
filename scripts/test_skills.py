@@ -181,7 +181,7 @@ def test_hook_blocks_an_invalid_manifest(tmp_path):
 def test_credits_write_lists_references(tmp_path):
     root = make_repo(tmp_path)
     write_credits(root)
-    readme = (root / "README.md").read_text()
+    readme = (root / "README.md").read_text(encoding="utf-8")
     section = readme.split("<!-- credits:start -->")[1].split("<!-- credits:end -->")[0]
     assert "### alpha" in section and "### beta" in section
     assert "derived from [beta](skills/beta)" in section
@@ -190,10 +190,26 @@ def test_credits_write_lists_references(tmp_path):
     assert readme.startswith("# repo\n")
 
 
+def test_credits_write_keeps_utf8_and_lf_outside_utf8_mode(tmp_path):
+    root = make_repo(tmp_path)
+    readme = root / "README.md"
+    readme.write_bytes("# repo · café\n\n<!-- credits:start -->\n<!-- credits:end -->\n".encode("utf-8"))
+    env = dict(os.environ, PYTHONUTF8="0")
+    for cmd in (["credits", "--write"], ["validate"]):
+        out = subprocess.run([sys.executable, "-X", "utf8=0", SCRIPT, "--root", str(root), *cmd],
+                             capture_output=True, text=True, env=env)
+        assert out.returncode == 0, out.stdout + out.stderr
+    data = readme.read_bytes()
+    assert b"\r\n" not in data
+    text = data.decode("utf-8")
+    assert text.startswith("# repo · café\n")
+    assert "[acme/skills · gamma]" in text
+
+
 def test_unknown_commit_links_to_the_default_branch(tmp_path):
     root = make_repo(tmp_path, manifest=GOOD.replace("commit: abc1234", "commit: unknown"))
     write_credits(root)
-    section = (root / "README.md").read_text()
+    section = (root / "README.md").read_text(encoding="utf-8")
     assert "https://github.com/acme/skills/tree/HEAD/skills/gamma" in section
     assert "commit unknown" in section
 
@@ -202,7 +218,7 @@ def test_stale_credits_fail_validate(tmp_path):
     root = make_repo(tmp_path)
     write_credits(root)
     readme = root / "README.md"
-    readme.write_text(readme.read_text().replace("Visuals", "Pictures"))
+    readme.write_text(readme.read_text(encoding="utf-8").replace("Visuals", "Pictures"), encoding="utf-8")
     out = run(root, "validate")
     assert out.returncode == 1
     assert "credits --write" in out.stdout
