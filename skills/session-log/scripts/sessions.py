@@ -20,7 +20,9 @@ from pathlib import Path
 try:
     import yaml
 except ImportError:
-    sys.exit("sessions.py needs PyYAML: pip install pyyaml")
+    print("sessions.py needs PyYAML: pip install pyyaml", file=sys.stderr)
+    # The SessionEnd hook must never fail the session's exit.
+    sys.exit(0 if "--hook" in sys.argv else 1)
 
 # Error classes read off a result's text, after tokeneconomizer's observe.py; first match wins.
 ERROR_PATTERNS = [
@@ -527,6 +529,8 @@ def main(argv=None):
     e.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects",
                    help="folder of the project log folders (default: ~/.claude/projects)")
     args = parser.parse_args(argv)
+    if args.hook and args.logs:
+        parser.error("--hook reads its log from stdin: name no logs")
 
     if args.hook:
         return hook(args.config, args.projects)
@@ -537,6 +541,7 @@ def main(argv=None):
     written, fresh, skipped = extract(out, [Path(name) for name in args.logs], args.projects)
     print(f"{written} written, {fresh} up to date, {skipped} not session logs")
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

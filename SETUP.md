@@ -42,11 +42,11 @@ Steps for a fresh clone or a new machine. Each one can run again on a machine al
 
    The variable takes several folders separated by `:`; keep any already there.
 
-7. Write each session's `session-log` file when the session ends: add a SessionEnd hook to the `hooks` block of `~/.claude/settings.json`. It needs `python3` with PyYAML, and never fails the exit:
+7. Write each session's `session-log` file when the session ends: add a SessionEnd hook to the `hooks` block of `~/.claude/settings.json`. It needs `python3` with PyYAML, and never fails the exit. The `timeout` lifts the 1.5-second budget that SessionEnd hooks share by default, so a long log is not cut off:
 
    ```json
    "hooks": {
-     "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 ~/.claude/skills/session-log/scripts/sessions.py extract --hook"}]}]
+     "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 ~/.claude/skills/session-log/scripts/sessions.py extract --hook", "timeout": 10}]}]
    }
    ```
 

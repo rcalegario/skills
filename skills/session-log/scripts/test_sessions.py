@@ -1,6 +1,8 @@
 """Tests for sessions.py. Run: python -m pytest <skill-dir>/scripts -q"""
+import io
 import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -555,12 +557,10 @@ def test_opening_builtins_skipped(tmp_path, capsys):
     assert d["initial_prompt"].startswith("<command-name>/task</command-name>")
 
 
-def hook(tmp_path, capsys, monkeypatch, stdin, cfg=True):
-    import io
+def hook(tmp_path, capsys, monkeypatch, stdin, cfg=None):
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
-    args = ["--config", str(config(tmp_path) if cfg else tmp_path / "missing.yaml"), "extract", "--hook",
-            "--projects", str(tmp_path / "projects")]
-    return run(capsys, *args)
+    return run(capsys, "--config", str(cfg or config(tmp_path)), "extract", "--hook",
+               "--projects", str(tmp_path / "projects"))
 
 
 def test_hook_writes_transcript(tmp_path, capsys, monkeypatch):
@@ -585,12 +585,29 @@ def test_hook_never_fails(tmp_path, capsys, monkeypatch):
     empty = tmp_path / "projects" / "-p" / "empty.jsonl"
     empty.write_text("")
     good = json.dumps({"transcript_path": str(log)})
-    for stdin, cfg in [("not json", True), ("{}", True), (good, False),
-                       (json.dumps({"transcript_path": str(empty)}), True),
-                       (json.dumps({"transcript_path": str(tmp_path / "gone.jsonl")}), True)]:
+    for stdin, cfg in [("not json", None), ("{}", None), (good, tmp_path / "missing.yaml"),
+                       (json.dumps({"transcript_path": str(empty)}), None),
+                       (json.dumps({"transcript_path": str(tmp_path / "gone.jsonl")}), None)]:
         code, out, err = hook(tmp_path, capsys, monkeypatch, stdin, cfg)
         assert code == 0
         assert len(err.strip().splitlines()) == 1, (stdin, err)
     monkeypatch.setattr(sessions, "digest", lambda paths: 1 / 0)
     code, out, err = hook(tmp_path, capsys, monkeypatch, good)
     assert code == 0 and "ZeroDivisionError" in err
+
+
+def test_hook_without_pyyaml_exits_0():
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions.py")
+    code = ("import runpy, sys; sys.modules['yaml'] = None; "
+            f"sys.argv = [{script!r}, 'extract', '--hook']; runpy.run_path({script!r}, run_name='__main__')")
+    done = subprocess.run([sys.executable, "-c", code], input="{}", capture_output=True, text=True)
+    assert done.returncode == 0
+    assert len(done.stderr.strip().splitlines()) == 1 and "PyYAML" in done.stderr
+
+
+def test_hook_rejects_named_logs(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    with pytest.raises(SystemExit) as exc:
+        sessions.main(["--config", str(config(tmp_path)), "extract", "--hook", "a.jsonl"])
+    assert exc.value.code == 2
+    assert "--hook" in capsys.readouterr().err
