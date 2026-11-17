@@ -31,6 +31,8 @@ Every status change, the roadmap approval and the feature skeleton go through th
 
 `approve` and `roadmap --approve` record the user's approval: run them only in the turn the user gives it.
 
+Every stop that waits for the user's yes uses the skeleton and the type named at that stop, from `<skill-dir>/reference/approvals.md`.
+
 ## Project rules come first
 
 Before sizing, read the project's root `CLAUDE.md` / `AGENTS.md` and the ones in each area the work touches. They own everything project-specific: how to run tests, commit conventions, feature naming, runtime constraints, licensing. Where they disagree with this skill, they win.
@@ -41,9 +43,9 @@ Facts are looked up in the code and docs, never asked. Decisions that belong to 
 
 1. Check the project has a `CLAUDE.md` or `AGENTS.md` stating its commands, folder structure, code style and boundaries (always / ask first / never). When it lacks one, offer to write it with `/init`. These hold for every feature, so specs never repeat them.
 2. When the project docs name their own roadmap, work in that file under the project's rules and skip the roadmap script. Otherwise the roadmap is `.specs/roadmap.yaml`.
-3. Read the project's docs and code. Ask the user's decisions in rounds (same question format as SPEC): the goal, who it serves, constraints, what stays out. Milestones first, features second.
+3. Read the project's docs and code. Ask the user's decisions in rounds (**question** format): the goal, who it serves, constraints, what stays out. Milestones first, features second.
 4. Draft **milestones** as outcomes (what becomes true) and, inside each, **features** as tracer bullets: thin vertical slices, each demoable on its own and sized to fit M or L. Give each feature its `blocked_by` (feature or milestone ids).
-5. Run `flow.py roadmap` until it exits 0. Present the milestones and features with their blockers, and stop.
+5. Run `flow.py roadmap` until it exits 0. Present the roadmap in the **plan** format, and stop.
 6. After the user approves, run `flow.py roadmap --approve`.
 
 ```yaml
@@ -64,13 +66,13 @@ milestones:
 
 A roadmap feature's status is the `status` of the `feature.yaml` whose `roadmap:` names it (`planned` while none does); a milestone is `planned` (all its features planned), `done` (all done) or `building`. The script writes both into `roadmap.yaml` after every command that changes a feature, so never edit those `status` lines: they are overwritten. `flow.py roadmap` shows progress per milestone and the features ready to start. Each roadmap feature has at most one `feature.yaml`.
 
-Any change to the roadmap (a split at SIZE, a feature added or dropped) is proposed to the user and written only after they approve.
+Any change to the roadmap (a split at SIZE, a feature added or dropped) is proposed to the user (**plan** format) and written only after they approve.
 
 ## Size
 
 | Size | Shape | Files | Grill | Approvals | Close |
 |---|---|---|---|---|---|
-| **S** | ≤3 files, one sentence | none: a 1–3 step plan in chat | never | one "ok" in chat | affected tests green, commit |
+| **S** | ≤3 files, one sentence | none: a 1–3 step plan in chat (**plan** format) | never | one "yes" in chat | affected tests green, commit |
 | **M** | clear feature, ≤8 tasks | `spec.md` + `feature.yaml` | offer once | one (spec and tasks together) | suite, checks, review |
 | **L** | several components or an architectural decision | `spec.md` + `feature.yaml`, `design.md` when a choice needs explaining | by default | two (spec, then tasks) | suite, checks, review |
 
@@ -87,32 +89,20 @@ An S plan that grows past 3 steps becomes M.
 - other people depend on the result, or a screen must match a given design pixel for pixel;
 - criteria only a human can prove in a real environment (UAT).
 
-Say which signal fired, then suggest, in this order: (1) **split** into features that fit M or L, proposing the cut (and the matching roadmap change, when there is a roadmap); (2) when splitting does not remove the risk, move to `/tlc-spec-driven`. The user decides.
+Say which signal fired, then suggest, in this order: (1) **split** into features that fit M or L, proposing the cut (and the matching roadmap change, when there is a roadmap); (2) when splitting does not remove the risk, move to `/tlc-spec-driven`. The user decides (**question** format, one option per path). A chosen split changes the roadmap, which then gets its own **plan** stop.
 
 ## SPEC (M and L)
 
 1. Read the relevant code and docs. With a roadmap, start from a feature `flow.py roadmap` lists as ready, or the one the user names. Check the project's docs for the feature naming rule; default to `<roadmap id>-<slug>` (`F1.1-csv-export`), or a short kebab-case slug without a roadmap.
-2. Open with the **assumptions** you are making, each with where it came from, so the user corrects them at a glance:
+2. List the **assumptions** you are making, each with where it came from, in the **Assumptions** list of the first question round.
 
-   ```
-   Assumptions (correct me now, or I go with these):
-   1. Export uses the current screen's filters - the list filters client-side
-   2. Comma separator, UTF-8 with BOM, so Excel opens it right
-   ```
-
-3. Ask the user's decisions in one round (L: in rounds, each round asking every question whose prerequisites are settled). Number each question and lead with your recommendation, so "yes" accepts it:
-
-   ```
-   **Q1 - <title>**: <question, with its options>
-   ➡️ <recommended answer>
-   ```
-
+3. Ask the user's decisions in one round (L: in rounds, each round asking every question whose prerequisites are settled), in the **question** format.
    Turn vague words into concrete ones ("fast" → "under 1 s for 1,000 rows"). Write each answer into its file in the turn it arrives: a criterion, an `Out of scope` line, or a `Notes` entry.
 4. Run `flow.py new <feature> ...`: it creates `.specs/features/<feature>/` with `spec.md` (from `<skill-dir>/templates/spec.md`) and a draft `feature.yaml` (schema below) that you then fill. `spec.md` is the prose for people; everything the script checks lives in `feature.yaml`. Each fact lives in one of them, never both.
 5. Write the criteria (below). Re-read the request sentence by sentence: each sentence lands on a criterion, an `Out of scope` line, or a question.
 6. Write the tasks and checks (below). For L, only after the spec is approved.
 7. **Grill by size.** M: when the draft passes `check`, offer once: "Want me to grill this spec first?" and run the `grilling` skill on a yes. L: run `grilling` before presenting. Bound it to this feature's behaviour and scope; the architecture is `design.md`'s job.
-8. Run `flow.py check <feature>` until it exits 0. Present: the problem in a line, the criteria, out of scope, the assumptions you kept, and (M, or L at its second stop) the tasks as a numbered list (title, blocked by, commit message) with one line on why the first task leads, and the checks (criterion → test or manual). Blocking questions go first. Stop.
+8. Run `flow.py check <feature>` until it exits 0. Present it in the **plan** format: the criteria, and (M, or L at its second stop) the tasks and the checks. Stop.
 
 Done when: `check` exits 0, the summary is in chat, and the turn ended waiting for the user. On the approval: `approve <feature> spec` (M approves both; L then writes the tasks and stops again for `approve <feature> tasks`).
 
@@ -238,7 +228,7 @@ Run `flow.py status <feature>` and take a task from the **frontier** (no commit 
 
 **Scope.** An idea that is not in a task's criteria goes to `deferred`; a bug outside the task is reported to the user. When a task turns out bigger than planned, or needs a decision the spec did not settle, stop and ask: split the task (then `check`), or update the spec with the user. A decision the user makes mid-build is written into its file in the turn it arrives.
 
-**Authority.** Approval covers local work and local commits. Push, deploy, and any remote or destructive action need their own explicit go-ahead.
+**Authority.** Approval covers local work and local commits. Push, deploy, and any remote or destructive action need their own explicit go-ahead (**outbound** format).
 
 ## CLOSE
 
@@ -253,8 +243,8 @@ M and L:
    - **Standards**: breaches of the project's documented standards (its `CLAUDE.md` / `AGENTS.md` files and coding-standards docs).
 
    Invoke the `code-review` skill with `base` and the paths to `spec.md` and `feature.yaml` when it is available; otherwise dispatch two sub-agents in parallel, one per axis, each given the diff command and its sources, each reporting in under 400 words with a quote or `file:line` per finding.
-4. Record every finding with `flow.py finding <feature> --text T --source S --action fix --task T<n>` or `--action wontfix --reason R`, and a clean review with `finding <feature> --none`. Comments left on the PR are findings too: read them (`gh api repos/<owner>/<repo>/pulls/<n>/comments`, and `issues/<n>/comments` for general ones), and record each with `--source pr-comment --comment-id <id>`. A `fix` adds a task (same BUILD loop); a `wontfix` carries a `reason` the user agreed to. One round: after the fixes, run the suite again, and there is no second review.
-5. **Manual checks.** Present the `manual` checks as a numbered checklist with their steps, and wait. Record each one with `set <feature> AC<n> pass|fail` as the user reports. A `fail` is fixed (a task, same loop) and checked again.
+4. Record every finding with `flow.py finding <feature> --text T --source S --action fix --task T<n>` or `--action wontfix --reason R`, and a clean review with `finding <feature> --none`. Comments left on the PR are findings too: read them (`gh api repos/<owner>/<repo>/pulls/<n>/comments`, and `issues/<n>/comments` for general ones), and record each with `--source pr-comment --comment-id <id>`. A `fix` adds a task (same BUILD loop); a `wontfix` carries a `reason` the user agreed to (**question** format). One round: after the fixes, run the suite again, and there is no second review.
+5. **Manual checks.** Present the `manual` checks in the **checklist** format, and wait. Record each one with `set <feature> AC<n> pass|fail` as the user reports. A `fail` is fixed (a task, same loop) and checked again.
 6. `finish <feature>`: it refuses while a task is not `done`, a check is not `pass`, or the review is missing.
 
 Done when: `finish` exits 0. Report in a few lines: the criteria proved by tests, the ones the user confirmed, anything deferred. A lesson that will matter in later features is proposed to the user as a line in the right `CLAUDE.md` / `AGENTS.md`.

@@ -1,0 +1,3 @@
+# Copy to config.yaml (gitignored) and adjust.
+# out: the folder that holds one folder per day, each with one file per session.
+out: ~/Projects/home/sessions
