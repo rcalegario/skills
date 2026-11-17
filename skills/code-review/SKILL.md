@@ -34,6 +34,14 @@ Search the repo for every file that documents how code is written: `CLAUDE.md` a
 
 Then attach the **smell baseline** in `reference/smells.md`, in full. It applies even when a repo documents nothing, with two rules: a documented repo standard overrides the baseline, and every smell is a labelled judgement call, never a hard violation. Skip anything tooling already enforces.
 
+### 4. Run the repo's own checks
+
+Before any sub-agent, run the checks the repo defines, **once**: its tests, linter and type checker. Find the commands in this order: `CLAUDE.md` / `AGENTS.md`, then `Makefile`, `package.json` scripts, `pyproject.toml`, the CI config.
+
+- Run only commands that read and verify: test, lint, typecheck, format check. Never an install, build-and-deploy, migration, or any command that changes something outside the working tree.
+- A failure goes under **Checks** in the report as a fact, with the command and the first failing lines. The axes do not review what a tool already proved: tell each sub-agent which checks failed so it does not repeat them.
+- When no command is found, write "Checks: none found" as a warning in the report and go on with the review.
+
 ## Why separate axes
 
 A change can pass one axis and fail another:
