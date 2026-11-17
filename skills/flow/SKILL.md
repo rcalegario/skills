@@ -72,7 +72,7 @@ Any change to the roadmap (a split at SIZE, a feature added or dropped) is propo
 
 | Size | Shape | Files | Grill | Approvals | Close |
 |---|---|---|---|---|---|
-| **S** | ≤3 files, one sentence | none: a 1–3 step plan in chat (**plan** format) | never | one "ok" in chat | affected tests green, commit |
+| **S** | ≤3 files, one sentence | none: a 1–3 step plan in chat (**plan** format) | never | one "yes" in chat | affected tests green, commit |
 | **M** | clear feature, ≤8 tasks | `spec.md` + `feature.yaml` | offer once | one (spec and tasks together) | suite, checks, review |
 | **L** | several components or an architectural decision | `spec.md` + `feature.yaml`, `design.md` when a choice needs explaining | by default | two (spec, then tasks) | suite, checks, review |
 
@@ -89,12 +89,12 @@ An S plan that grows past 3 steps becomes M.
 - other people depend on the result, or a screen must match a given design pixel for pixel;
 - criteria only a human can prove in a real environment (UAT).
 
-Say which signal fired, then suggest, in this order: (1) **split** into features that fit M or L, proposing the cut (and the matching roadmap change, when there is a roadmap); (2) when splitting does not remove the risk, move to `/tlc-spec-driven`. The user decides (**question** format, one option per path).
+Say which signal fired, then suggest, in this order: (1) **split** into features that fit M or L, proposing the cut (and the matching roadmap change, when there is a roadmap); (2) when splitting does not remove the risk, move to `/tlc-spec-driven`. The user decides (**question** format, one option per path). A chosen split changes the roadmap, which then gets its own **plan** stop.
 
 ## SPEC (M and L)
 
 1. Read the relevant code and docs. With a roadmap, start from a feature `flow.py roadmap` lists as ready, or the one the user names. Check the project's docs for the feature naming rule; default to `<roadmap id>-<slug>` (`F1.1-csv-export`), or a short kebab-case slug without a roadmap.
-2. List the **assumptions** you are making, each with where it came from, at the top of the first question round, so the user corrects them at a glance.
+2. List the **assumptions** you are making, each with where it came from, in the **Assumptions** list of the first question round.
 
 3. Ask the user's decisions in one round (L: in rounds, each round asking every question whose prerequisites are settled), in the **question** format.
    Turn vague words into concrete ones ("fast" → "under 1 s for 1,000 rows"). Write each answer into its file in the turn it arrives: a criterion, an `Out of scope` line, or a `Notes` entry.

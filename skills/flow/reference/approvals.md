@@ -46,9 +46,9 @@ Neutral values (a type, a size, a check kind) get no dot: **size:** `M`, **check
 
 ## question
 
-To choose between options. Used by: a `task` decide round and a spike proposed in it, a `pr_note` for an item not concluded, `flow` SPEC and ROADMAP questions, the escalation at SIZE, a `wontfix` review finding.
+To choose between options.
 
-Body: the questions of the round, `---` between them. Each:
+Body: an optional **Assumptions** list first (what was taken as given, each with where it came from, so the user corrects it at a glance), then the questions of the round, `---` between them. Each:
 
 ```
 ❓ **Q1 - D-07 <title>**: <the question, with the facts that matter and their context ids>
@@ -71,7 +71,7 @@ Body: the questions of the round, `---` between them. Each:
 
 ## plan
 
-To approve work before it is built. Used by: the `task` split of outcomes into requirements, the `flow` roadmap and any change to it, a spec with its tasks (M at once; L in two stops), an S plan.
+To approve work before it is built.
 
 Body sections, in this order:
 
@@ -80,7 +80,7 @@ Body sections, in this order:
 3. **Scope**: `in` and `out`, one line each.
 4. **Content**, as cards:
    - requirement split: one card per requirement, with its root decision and validation;
-   - roadmap: one card per milestone or feature, with size and blocked by;
+   - roadmap: one card per feature, with milestone, size and blocked by;
    - spec: criteria cards, then task cards (covers, blocked by, commit) with one line on why the first leads, then check cards (criterion → `test` or `manual`);
    - S plan: only Goal and the steps as cards.
 5. **Assumptions**: what was taken as given, with where it came from.
@@ -89,7 +89,7 @@ Body sections, in this order:
 
 ## outbound
 
-To let something leave this machine or happen where it cannot be taken back. Used by: a push, a PR, a comment on an issue or ticket, a deploy, removing a worktree or a branch, any action on a shared environment.
+To let something leave this machine or happen where it cannot be taken back: a push, a PR, a comment, a deploy, a removal, an action on a shared environment.
 
 Body sections, in this order:
 
@@ -102,7 +102,7 @@ Body sections, in this order:
 
 ## checklist
 
-For checks only the user can run. Used by: the `flow` manual checks at CLOSE.
+For checks only the user can run.
 
 Body: one card per check, numbered in the order to run them:
 
