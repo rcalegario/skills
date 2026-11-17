@@ -35,4 +35,14 @@ Used only for the topics the repo leaves undocumented, on top of `fallback/`:
 - **Branch**: `<type>/<AHA-ID>-<slug>`, e.g. `feat/AHSMT-72-16-promote-final-without-rebuild`; without an Aha record (a dependency bump) `<type>/<slug>`.
 - **Title**: `<type>(<scope>): [AHSMT-x-y] <summary>`; leave the bracket out when there is no record.
 - **Body**: under Related Work add `**Aha record:** [AHSMT-x-y](https://komatsuahs.aha.io/requirements/AHSMT-x-y)`, the most specific record (the requirement, otherwise the feature `https://komatsuahs.aha.io/features/AHSMT-x`). Only bot, dependency or hotfix PRs write `N/A — <reason>`. Author checklist: title and branch carry the id, the record is linked. Reviewer checklist: the linked record matches the change.
-- After the PR is open, offer a comment with its link on the story (needs a yes).
+- After the PR is open, do not offer a comment with its link (replaces that part of base step 3): the PR links to the story by itself through the id in its title and branch.
+
+## finish
+
+Before the worktree cleanup, offer (**outbound** format) a comment on the story that closes it for the PO and the team, in the story's language and without task ids (`D-nn`, `V-nn`, `N-n`):
+
+- **How each AC was met**: one line per `AC-n` and `N-n` of the story, named by its text, saying what in the delivered change meets it and how it was proven (from its requirements, decisions and passed validations).
+- **What had to change**: each item that could not be met as written, with why and what was done instead: a requirement read differently (its `comment`), an item left open (its `pr_note`), a dropped item or a decision that narrowed the scope. Say so plainly when nothing changed.
+- The PR link at the end.
+
+Once posted, record its link with `task.py journal`.
