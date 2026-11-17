@@ -54,8 +54,8 @@ TOKEN_FIELDS = {"input": "input_tokens", "output": "output_tokens",
                 "cache_read": "cache_read_input_tokens", "cache_write": "cache_creation_input_tokens"}
 
 # User text that the harness wrote, not the human: command output and interruption notes.
-NOT_TYPED = ("<local-command-stdout>", "<local-command-stderr>", "<bash-stdout>", "<bash-stderr>",
-             "[Request interrupted")
+INTERRUPTED = "[Request interrupted"
+NOT_TYPED = ("<local-command-stdout>", "<local-command-stderr>", "<bash-stdout>", "<bash-stderr>", INTERRUPTED)
 
 COMMAND_NAME = re.compile(r"<command-name>/?([^<]+)</command-name>")
 COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
@@ -150,7 +150,11 @@ def typed_commands(records):
 def skill_counts(commands, call_list):
     names = [c["name"] for c in commands if c["skill"]]
     names += [c["input"].get("skill") for c in call_list if c["tool"] == "Skill" and c["input"].get("skill")]
-    return dict(sorted(Counter(names).items()))
+    return sorted_counts(names)
+
+
+def sorted_counts(values):
+    return dict(sorted(Counter(values).items()))
 
 
 def start_skill(first, commands):
@@ -165,12 +169,10 @@ def command_name(text):
     return m.group(1).strip() if m else None
 
 
-def initial_prompt(prompts):
-    """The first prompt the human typed, past any /clear that opens the session."""
-    typed = [t for t in prompts if not t.startswith(NOT_TYPED)]
-    while typed and command_name(typed[0]) == "clear":
-        typed.pop(0)
-    return typed[0] if typed else None
+def initial_prompt(prompts, commands):
+    """The first prompt the human typed, past the built-in commands (/clear, /model...) that open the session."""
+    builtins = {c["text"] for c in commands if not c["skill"]}
+    return next((t for t in prompts if not t.startswith(NOT_TYPED) and t not in builtins), None)
 
 
 def compactions(records):
@@ -198,16 +200,32 @@ def environment(records):
     out = {key: list(dict.fromkeys(r[field] for r in records if r.get(field)))
            for key, field in ENVIRONMENT_FIELDS.items()}
     out["entrypoint"] = next((r["entrypoint"] for r in records if r.get("entrypoint")), None)
-    return {k: out[k] for k in ("branches", "versions", "entrypoint", "permission_modes", "efforts")}
+    return out
 
 
-def last_cost_state(records):
-    return next((r for r in reversed(records) if r.get("type") == "cost-state"), {})
+def process_states(records):
+    """The last cost-state of each process: the record holds running totals that restart when a session is
+    resumed, under a new startTime."""
+    last = {}
+    for r in records:
+        if r.get("type") == "cost-state":
+            last[r.get("startTime")] = r
+    return list(last.values())
 
 
-def models(state):
-    return {model: {key: u.get(field) for key, field in MODEL_FIELDS.items()}
-            for model, u in (state.get("modelUsage") or {}).items()}
+def models(states):
+    out = {}
+    for state in states:
+        for model, u in (state.get("modelUsage") or {}).items():
+            totals = out.setdefault(model, dict.fromkeys(MODEL_FIELDS, 0))
+            for key, field in MODEL_FIELDS.items():
+                totals[key] += u.get(field) or 0
+    return out
+
+
+def lines(states):
+    return {"added": sum(s.get("totalLinesAdded") or 0 for s in states),
+            "removed": sum(s.get("totalLinesRemoved") or 0 for s in states)}
 
 
 def edited_files(call_list, cwd):
@@ -226,8 +244,9 @@ def prs(records):
     return list(out.values())
 
 
-def counted(records, field, when=lambda r: True):
-    return dict(sorted(Counter(r[field] for r in records if r.get(field) and when(r)).items()))
+def field_counts(records, field, when=lambda r: True):
+    """How many records hold each value of field, sorted by value."""
+    return sorted_counts(r[field] for r in records if r.get(field) and when(r))
 
 
 def active_s(records):
@@ -328,10 +347,10 @@ def tokens(records):
     return {k: sum(int(u.get(f) or 0) for u in by_id.values()) for k, f in TOKEN_FIELDS.items()}
 
 
-def cost_usd(records):
-    """The session's own total from its last cost-state record; None when it recorded none."""
-    totals = [r["totalCostUSD"] for r in records if r.get("type") == "cost-state" and "totalCostUSD" in r]
-    return totals[-1] if totals else None
+def cost_usd(states):
+    """The session's own total, summed over its processes; None when it recorded none."""
+    totals = [s["totalCostUSD"] for s in states if "totalCostUSD" in s]
+    return sum(totals) if totals else None
 
 
 def subagents(path):
@@ -351,7 +370,7 @@ def subagents(path):
         call_list = calls(records)
         out.append({"id": log.stem.removeprefix("agent-"), "type": meta.get("agentType"),
                     "description": meta.get("description"), "calls": len(call_list),
-                    "by_tool": dict(sorted(Counter(c["tool"] for c in call_list).items())),
+                    "by_tool": sorted_counts(c["tool"] for c in call_list),
                     "skills": skill_counts(typed_commands(records), call_list), "tokens": tokens(records)})
     return out
 
@@ -383,37 +402,37 @@ def digest(paths):
     stamps = sorted((r["timestamp"] for r in records if r.get("timestamp")), key=_time)
     call_list = calls(records)
     prompts = prompt_texts(records)
-    first = initial_prompt(prompts)
     commands = typed_commands(records)
-    state = last_cost_state(records)
+    first = initial_prompt(prompts, commands)
+    states = process_states(records)
     return {
         "session": session,
         "project": project,
         "start": _iso(stamps[0]) if stamps else None,
         "end": _iso(stamps[-1]) if stamps else None,
         "duration_s": int((_time(stamps[-1]) - _time(stamps[0])).total_seconds()) if stamps else 0,
-        "calls": {"total": len(call_list), "by_tool": dict(sorted(Counter(c["tool"] for c in call_list).items()))},
+        "calls": {"total": len(call_list), "by_tool": sorted_counts(c["tool"] for c in call_list)},
         "failures": failures(call_list),
         "repeats": repeats(call_list),
         "search_streaks": search_streaks(call_list),
         "tokens": tokens(records),
-        "cost_usd": cost_usd(records),
+        "cost_usd": cost_usd(states),
         "subagents": [a for path in paths for a in subagents(path)],
         "title": title(records),
         "initial_prompt": first,
         "start_skill": start_skill(first, commands),
         "skills": skill_counts(commands, call_list),
-        "commands": dict(sorted(Counter(c["name"] for c in commands if not c["skill"]).items())),
+        "commands": sorted_counts(c["name"] for c in commands if not c["skill"]),
         "human_turns": sum(not t.startswith(NOT_TYPED) for t in prompts),
-        "interruptions": sum(t.startswith("[Request interrupted") for t in prompts),
+        "interruptions": sum(t.startswith(INTERRUPTED) for t in prompts),
         "active_s": active_s(records),
         "compactions": compactions(records),
         "environment": environment(records),
-        "models": models(state),
-        "lines": {"added": state.get("totalLinesAdded", 0), "removed": state.get("totalLinesRemoved", 0)},
+        "models": models(states),
+        "lines": lines(states),
         "edited_files": edited_files(call_list, project),
-        "denials": counted(records, "toolDenialKind"),
-        "api_errors": counted(records, "error", lambda r: r.get("isApiErrorMessage")),
+        "denials": field_counts(records, "toolDenialKind"),
+        "api_errors": field_counts(records, "error", lambda r: r.get("isApiErrorMessage")),
         "prs": prs(records),
     }
 

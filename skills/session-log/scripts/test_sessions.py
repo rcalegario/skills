@@ -532,3 +532,24 @@ def test_subagent_type_and_counts(tmp_path, capsys):
         "by_tool": {"Bash": 1, "Read": 1, "Skill": 1}, "skills": {"code-review": 1}}
     assert d["skills"] == {}
     assert d["calls"]["by_tool"] == {"Agent": 1}
+
+
+def test_totals_summed_over_resumed_processes(tmp_path, capsys):
+    def state(start, cost, added, model_cost):
+        return dict(type="cost-state", startTime=start, totalCostUSD=cost, totalLinesAdded=added, totalLinesRemoved=1,
+                    modelUsage={"m": {"inputTokens": 10, "outputTokens": 1, "cacheReadInputTokens": 0,
+                                      "cacheCreationInputTokens": 0, "costUSD": model_cost}})
+    log = (Log().prompt()
+           .record(**state(1, 1.0, 5, 1.0)).record(**state(1, 3.25, 32, 3.25))
+           .record(**state(2, 0.25, 1, 0.25)).record(**state(2, 2.5, 146, 2.5)))
+    d = digest(tmp_path, log, capsys)
+    assert d["cost_usd"] == 5.75
+    assert d["lines"] == {"added": 178, "removed": 2}
+    assert d["models"] == {"m": {"cost_usd": 5.75, "input": 20, "output": 2, "cache_read": 0, "cache_write": 0}}
+
+
+def test_opening_builtins_skipped(tmp_path, capsys):
+    log = Log().command("model", "opus").command("clear").command("task", "go", skill=True).prompt("yes")
+    d = digest(tmp_path, log, capsys)
+    assert d["start_skill"] == {"name": "task", "args": "go"}
+    assert d["initial_prompt"].startswith("<command-name>/task</command-name>")
