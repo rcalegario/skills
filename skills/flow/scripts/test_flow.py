@@ -682,6 +682,12 @@ def test_finding_needs_a_known_source(repo):
     assert findings(repo) is None
 
 
+@pytest.mark.parametrize("source", ["correctness-review", "tests-review", "security-review"])
+def test_finding_accepts_each_review_source(repo, source):
+    assert wontfix(repo, "--source", source) == 0
+    assert findings(repo) == [{"text": "x", "action": "wontfix", "reason": "y", "source": source}]
+
+
 def test_finding_pr_comment_needs_its_id_and_only_it(repo):
     assert wontfix(repo, "--source", "pr-comment") == 1
     assert wontfix(repo, "--source", "user", "--comment-id", "7") == 1
@@ -700,6 +706,12 @@ REVIEWED = FEATURE + "review:\n  findings:\n%s"
 def test_check_warns_on_a_finding_without_source_and_accepts_it(repo, capsys):
     code, out = check_output(repo, capsys, REVIEWED % "    - text: a\n      action: wontfix\n      reason: r\n")
     assert code == 0 and "source" in out
+
+
+@pytest.mark.parametrize("source", ["correctness-review", "tests-review", "security-review"])
+def test_check_accepts_a_finding_with_a_new_source(repo, capsys, source):
+    code, out = check_output(repo, capsys, REVIEWED % ("    - {text: a, action: wontfix, reason: r, source: %s}\n" % source))
+    assert code == 0 and "source must be one of" not in out
 
 
 def test_check_rejects_a_bad_source_and_a_pr_comment_without_id(repo, capsys):

@@ -46,7 +46,8 @@ TASK_STATUSES = ("todo", "doing", "verifying", "done")
 STARTED = ("verifying", "done")        # a task whose commit exists
 CHECK_STATUSES = ("pending", "pass", "fail")
 ACTIONS = ("fix", "wontfix")
-SOURCES = ("spec-review", "standards-review", "pr-comment", "user")
+SOURCES = ("spec-review", "standards-review", "correctness-review", "tests-review", "security-review",
+           "pr-comment", "user")
 MAX_TASKS = 8
 
 
