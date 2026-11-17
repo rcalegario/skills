@@ -42,6 +42,22 @@ Before any sub-agent, run the checks the repo defines, **once**: its tests, lint
 - A failure goes under **Checks** in the report as a fact, with the command and the first failing lines. The axes do not review what a tool already proved: tell each sub-agent which checks failed so it does not repeat them.
 - When no command is found, write "Checks: none found" as a warning in the report and go on with the review.
 
+### 5. Run the axes in parallel
+
+Issue the Standards and the Spec sub-agent calls together, in the foreground. Start each with a fresh context window and give it **only** the diff command, the commit list and its own sources. Neither sees the other's sources or findings.
+
+**Standards sub-agent**: the standards files from step 3, the smell baseline pasted in full (the sub-agent has no other access to it) and the failed checks from step 4. Brief: "Report every place the diff breaks a documented standard, citing the file and the rule, and any baseline smell you see, naming it and quoting the hunk. Documented-standard breaches can be hard; baseline smells are judgement calls, and a documented repo rule overrides the baseline. Skip anything tooling enforces or the failed checks already show. One line per finding in the format of `reference/findings.md`, source `standards-review`. Under 400 words."
+
+**Spec sub-agent**: the spec from step 2 and the failed checks from step 4. Brief: "Report (a) requirements the spec asked for that are missing or partial, (b) behaviour in the diff that was not asked for, (c) requirements that look implemented but are wrong. Quote the spec line for each. One line per finding in the format of `reference/findings.md`, source `spec-review`. Under 400 words."
+
+When there is no spec, skip the Spec sub-agent.
+
+### 6. Report
+
+Write one section per axis, under `## Standards` and `## Spec`, with the findings in the format of `reference/findings.md`. Put `## Checks` first with what step 4 found (failures, or "none found"). Do **not** merge or rerank findings across axes: the separation exists to prevent that.
+
+End with one line per axis: how many findings, and the worst one in that axis. Never pick a single winner across axes.
+
 ## Why separate axes
 
 A change can pass one axis and fail another:
