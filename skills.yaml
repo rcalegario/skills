@@ -40,6 +40,15 @@ own:
         relation: inspired
         took: Splitting the work into slices that each ship on their own
 
+  - name: code-review
+    references:
+      - repo: https://github.com/mattpocock/skills
+        path: skills/engineering/code-review
+        commit: 5863806dd4e1
+        license: MIT
+        relation: derived
+        took: Two parallel axes (Standards with a Fowler smell baseline, Spec) reported apart, never reranked
+
   - name: spec-lite
     test: uv run --no-project --with pyyaml python -m unittest discover -s tests
     references:
@@ -123,10 +132,6 @@ installed:
   - name: claude-handoff
     repo: https://github.com/mattpocock/skills
     path: "skills/in-progress/claude-handoff"
-    commit: 5863806dd4e1
-  - name: code-review
-    repo: https://github.com/mattpocock/skills
-    path: "skills/engineering/code-review"
     commit: 5863806dd4e1
   - name: codebase-design
     repo: https://github.com/mattpocock/skills
