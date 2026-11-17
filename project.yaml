@@ -22,7 +22,7 @@ features:
   - creditos-gerados-no-readme
   - instalacao-por-npx-skills
   - pre-commit-com-teste-por-skill
-  - revisao-de-codigo-propria-em-cinco-eixos
+  - revisao-de-codigo-em-dois-eixos-gravada-no-review-yaml
 notes: |
   Repo público rcalegario/skills, licença MIT (tlc-spec-driven segue CC-BY-4.0). skills.yaml é a fonte: own (nome, teste, referências) e installed (repo, caminho, commit fixado); scripts/skills.py valida e gera os créditos.
   Instalação nesta máquina por symlinks em ~/.claude/skills (SETUP.md), sem skills-manager. As skills task e idea-triage leem o home de um config.yaml local ignorado pelo git.
