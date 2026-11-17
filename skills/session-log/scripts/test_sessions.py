@@ -431,3 +431,15 @@ def test_commands_quoted_in_summaries_are_not_typed(tmp_path, capsys):
            .user("Summary: ran <command-name>/x</command-name>", isCompactSummary=True)
            .user("<command-name>/y</command-name>", origin={"kind": "peer"}))
     assert digest(tmp_path, log, capsys)["commands"] == {"clear": 1}
+
+
+def test_compactions(tmp_path, capsys):
+    meta = {"trigger": "auto", "preTokens": 214686, "postTokens": 23455, "durationMs": 43041,
+            "preservedSegment": {"headUuid": "u1"}}
+    log = (Log().prompt().record(type="system", subtype="compact_boundary", compactMetadata=meta)
+           .record(type="system", subtype="compact_boundary", compactMetadata={"trigger": "manual", "preTokens": 9}))
+    assert digest(tmp_path, log, capsys)["compactions"] == [
+        {"time": "2026-11-14T10:02:00Z", "trigger": "auto", "pre_tokens": 214686, "post_tokens": 23455,
+         "duration_ms": 43041},
+        {"time": "2026-11-14T10:03:00Z", "trigger": "manual", "pre_tokens": 9, "post_tokens": None,
+         "duration_ms": None}]

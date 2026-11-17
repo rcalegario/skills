@@ -167,6 +167,17 @@ def initial_prompt(prompts):
     return typed[0] if typed else None
 
 
+def compactions(records):
+    out = []
+    for r in records:
+        if r.get("type") == "system" and r.get("subtype") == "compact_boundary":
+            meta = r.get("compactMetadata") or {}
+            out.append({"time": _iso(r["timestamp"]) if r.get("timestamp") else None, "trigger": meta.get("trigger"),
+                        "pre_tokens": meta.get("preTokens"), "post_tokens": meta.get("postTokens"),
+                        "duration_ms": meta.get("durationMs")})
+    return out
+
+
 def active_s(records):
     return int(sum(r.get("durationMs") or 0 for r in records
                    if r.get("type") == "system" and r.get("subtype") == "turn_duration") / 1000)
@@ -338,6 +349,7 @@ def digest(paths):
         "start_skill": start_skill(first, commands),
         "skills": skill_counts(commands, call_list),
         "commands": dict(sorted(Counter(c["name"] for c in commands if not c["skill"]).items())),
+        "compactions": compactions(records),
     }
 
 
