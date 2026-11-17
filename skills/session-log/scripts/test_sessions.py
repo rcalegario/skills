@@ -553,3 +553,44 @@ def test_opening_builtins_skipped(tmp_path, capsys):
     d = digest(tmp_path, log, capsys)
     assert d["start_skill"] == {"name": "task", "args": "go"}
     assert d["initial_prompt"].startswith("<command-name>/task</command-name>")
+
+
+def hook(tmp_path, capsys, monkeypatch, stdin, cfg=True):
+    import io
+    monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
+    args = ["--config", str(config(tmp_path) if cfg else tmp_path / "missing.yaml"), "extract", "--hook",
+            "--projects", str(tmp_path / "projects")]
+    return run(capsys, *args)
+
+
+def test_hook_writes_transcript(tmp_path, capsys, monkeypatch):
+    log = Log().prompt().bash("ls")
+    a = log.write(tmp_path / "projects" / "-old" / f"{SID}.jsonl")
+    b = Log(cwd="/work/new").prompt("later").write(tmp_path / "projects" / "-new" / f"{SID}.jsonl")
+    out_file = tmp_path / "out" / "2026-11-14" / f"{SID}.yaml"
+    out_file.parent.mkdir(parents=True)
+    out_file.write_text("stale")
+    os.utime(a, (1, 1)), os.utime(b, (1, 1))
+    payload = json.dumps({"session_id": SID, "transcript_path": str(b), "cwd": "/work/new",
+                          "hook_event_name": "SessionEnd", "reason": "exit"})
+    code, out, err = hook(tmp_path, capsys, monkeypatch, payload)
+    assert (code, err) == (0, "")
+    d = yaml.safe_load(out_file.read_text())
+    assert d["human_turns"] == 2
+    assert d["calls"]["total"] == 1
+
+
+def test_hook_never_fails(tmp_path, capsys, monkeypatch):
+    log = Log().prompt().write(tmp_path / "projects" / "-p" / f"{SID}.jsonl")
+    empty = tmp_path / "projects" / "-p" / "empty.jsonl"
+    empty.write_text("")
+    good = json.dumps({"transcript_path": str(log)})
+    for stdin, cfg in [("not json", True), ("{}", True), (good, False),
+                       (json.dumps({"transcript_path": str(empty)}), True),
+                       (json.dumps({"transcript_path": str(tmp_path / "gone.jsonl")}), True)]:
+        code, out, err = hook(tmp_path, capsys, monkeypatch, stdin, cfg)
+        assert code == 0
+        assert len(err.strip().splitlines()) == 1, (stdin, err)
+    monkeypatch.setattr(sessions, "digest", lambda paths: 1 / 0)
+    code, out, err = hook(tmp_path, capsys, monkeypatch, good)
+    assert code == 0 and "ZeroDivisionError" in err

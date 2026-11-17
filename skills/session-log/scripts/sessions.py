@@ -3,6 +3,7 @@
   sessions.py extract [log ...]   write <out>/<local start date>/<session-id>.yaml for each named log; with
                                   none, for every session log under ~/.claude/projects whose file is missing
                                   or older than the log
+  sessions.py extract --hook      the same for the log named by the SessionEnd hook JSON on stdin; never fails
 
 Reads config.yaml beside this skill's SKILL.md (see config.example.yaml), or --config.
 The digest functions are a copy of retro-report's retro.py.
@@ -485,6 +486,35 @@ def is_fresh(out, session, logs):
     return any(f.stat().st_mtime >= newest for f in session_files(out, session))
 
 
+def extract(out, logs, projects):
+    """Write the file of each named log, or with none, of every session log under projects whose file is
+    missing or stale. Returns (written, up to date, not session logs)."""
+    # A session id has a log in each project folder it ran in (a moved project): its file joins them all.
+    groups = {}
+    for log in logs or sorted(projects.glob("*/*.jsonl")):
+        groups.setdefault(log.stem, {log}).update(projects.glob(f"*/{log.stem}.jsonl"))
+    fresh = set() if logs else {s for s, group in groups.items() if is_fresh(out, s, group)}
+    count = Counter(write_session(out, s, sorted(group)) for s, group in groups.items() if s not in fresh)
+    return count[True], len(fresh), count[False]
+
+
+def hook(config, projects):
+    """SessionEnd hook: the session's transcript_path comes as JSON on stdin. Every failure is one stderr
+    line and exit 0, so ending a session never blocks."""
+    try:
+        log = Path(json.load(sys.stdin)["transcript_path"])
+        out, problem = load_config(config)
+        if problem:
+            raise RuntimeError(problem)
+        written, _, skipped = extract(out, [log], projects)
+        if skipped:
+            raise RuntimeError(f"not a session log: {log}")
+        print(f"{written} written")
+    except Exception as exc:  # noqa: BLE001 - a hook must never fail the session's exit
+        print(f"session-log hook: {exc!r}", file=sys.stderr)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, default=Path(__file__).resolve().parent.parent / "config.yaml",
@@ -492,23 +522,21 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("extract", help="write the session file of each named log")
     e.add_argument("logs", nargs="*", help="logs to write whatever their mtime (default: every stale one)")
+    e.add_argument("--hook", action="store_true",
+                   help="SessionEnd hook: read the log from the hook JSON on stdin; never exit non-zero")
     e.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects",
                    help="folder of the project log folders (default: ~/.claude/projects)")
     args = parser.parse_args(argv)
 
+    if args.hook:
+        return hook(args.config, args.projects)
     out, problem = load_config(args.config)
     if problem:
         print(problem, file=sys.stderr)
         return 1
-    # A session id has a log in each project folder it ran in (a moved project): its file joins them all.
-    groups = {}
-    for log in [Path(name) for name in args.logs] or sorted(args.projects.glob("*/*.jsonl")):
-        groups.setdefault(log.stem, {log}).update(args.projects.glob(f"*/{log.stem}.jsonl"))
-    fresh = set() if args.logs else {s for s, logs in groups.items() if is_fresh(out, s, logs)}
-    count = Counter(write_session(out, s, sorted(logs)) for s, logs in groups.items() if s not in fresh)
-    print(f"{count[True]} written, {len(fresh)} up to date, {count[False]} not session logs")
+    written, fresh, skipped = extract(out, [Path(name) for name in args.logs], args.projects)
+    print(f"{written} written, {fresh} up to date, {skipped} not session logs")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
