@@ -55,6 +55,12 @@ What each skill is built from. Edit `skills.yaml`, then run `python scripts/skil
 - inspired by [microsoft/TokenEconomizer · trace](https://github.com/microsoft/TokenEconomizer/tree/7042ea8/tokeneconomizer/trace) (Apache-2.0, `7042ea8`) - Reading a Claude Code transcript as an ordered list of tool calls with their results
 - inspired by [microsoft/TokenEconomizer · observe.py](https://github.com/microsoft/TokenEconomizer/tree/7042ea8/tokeneconomizer/microskills/observe.py) (Apache-2.0, `7042ea8`) - Classifying a command's output into error classes by pattern
 
+### session-log
+
+- derived from [retro-report](skills/retro-report) - The session digest of retro.py (calls, failures, repeats, search streaks, tokens, cost, subagents), copied
+- inspired by [microsoft/TokenEconomizer · trace](https://github.com/microsoft/TokenEconomizer/tree/7042ea8/tokeneconomizer/trace) (Apache-2.0, `7042ea8`) - Reading a Claude Code transcript as an ordered list of tool calls with their results, through retro-report
+- inspired by [microsoft/TokenEconomizer · observe.py](https://github.com/microsoft/TokenEconomizer/tree/7042ea8/tokeneconomizer/microskills/observe.py) (Apache-2.0, `7042ea8`) - Classifying a command's output into error classes by pattern, through retro-report
+
 <!-- credits:end -->
 
 ## License

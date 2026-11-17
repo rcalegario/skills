@@ -28,7 +28,13 @@ Steps for a fresh clone or a new machine. Each one can run again on a machine al
    cp -n ~/Projects/skills/skills/retro-report/config.example.yaml ~/Projects/skills/skills/retro-report/config.yaml
    ```
 
-5. Show the `retro-report` band, which offers a retro once `threshold` sessions wait for one: add the skill's mod to the `env` block of `~/.claude/settings.json`, so every session loads it (and reloads it when a file changes):
+5. Create the personal settings of `session-log` (gitignored; edit `out` if the session files go elsewhere):
+
+   ```sh
+   cp -n ~/Projects/skills/skills/session-log/config.example.yaml ~/Projects/skills/skills/session-log/config.yaml
+   ```
+
+6. Show the `retro-report` band, which offers a retro once `threshold` sessions wait for one: add the skill's mod to the `env` block of `~/.claude/settings.json`, so every session loads it (and reloads it when a file changes):
 
    ```json
    "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/skills/retro-report/mod" }
@@ -36,10 +42,20 @@ Steps for a fresh clone or a new machine. Each one can run again on a machine al
 
    The variable takes several folders separated by `:`; keep any already there.
 
-6. Enable the pre-commit hook. It checks `skills.yaml` and runs the tests of the repo scripts and of each skill a commit touches (each skill's command is its `test:` in `skills.yaml`). It needs [uv](https://docs.astral.sh/uv/), `python3` and the `claude` CLI:
+7. Write each session's `session-log` file when the session ends: add a SessionEnd hook to the `hooks` block of `~/.claude/settings.json`. It needs `python3` with PyYAML, and never fails the exit. The `timeout` lifts the 1.5-second budget that SessionEnd hooks share by default, so a long log is not cut off:
+
+   ```json
+   "hooks": {
+     "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 ~/.claude/skills/session-log/scripts/sessions.py extract --hook", "timeout": 10}]}]
+   }
+   ```
+
+   Keep any `SessionEnd` hooks already there, as other entries of the list.
+
+8. Enable the pre-commit hook. It checks `skills.yaml` and runs the tests of the repo scripts and of each skill a commit touches (each skill's command is its `test:` in `skills.yaml`). It needs [uv](https://docs.astral.sh/uv/), `python3` and the `claude` CLI:
 
    ```sh
    git -C ~/Projects/skills config core.hooksPath .githooks
    ```
 
-The six skills are linked straight to this repo. If skills-manager ever lists one of them (`flow`, `task`, `spec-lite`, `tlc-spec-driven`, `idea-triage`, `retro-report`), remove it from the manager: it would replace the links with its own copy.
+The seven skills are linked straight to this repo. If skills-manager ever lists one of them (`flow`, `task`, `spec-lite`, `tlc-spec-driven`, `idea-triage`, `retro-report`, `session-log`), remove it from the manager: it would replace the links with its own copy.
