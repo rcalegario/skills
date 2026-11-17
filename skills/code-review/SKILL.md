@@ -82,7 +82,13 @@ For each axis that returned a `blocker` or `should-fix`, start **one** new sub-a
 - `nit` findings skip this step.
 - An answer that is none of the three verdicts counts as `kept`.
 
-### 7. Report
+### 7. Check docs and the ficha
+
+After the verify pass, the skill does this check itself: **no sub-agent**. List which of these exist at `HEAD`: `README.md`, a `docs/` folder, `CLAUDE.md` and `AGENTS.md` (root and the folders the diff touches) and `project.yaml` at the repo root (the project's ficha). For each that exists and that the diff did **not** touch, `grep` it for the names the diff adds, renames or removes (functions, commands, flags, files, features) and for what the commit list says changed. A file that mentions something the diff changed, or that should list a feature the diff adds (a README feature list, a `project.yaml` description), is reported as likely stale, with the file, the line it should change (or `-` when it lacks the entry) and the name that triggered it.
+
+These are hints, not findings: they carry no severity, have no `Source` and skip the verify pass. For each of `README.md`, `docs/` and `project.yaml` that does not exist, write "Absent: <name>" and go on. When nothing looks stale, write "Nothing looks stale".
+
+### 8. Report
 
 Before writing, check every cited `file:line`, nits included, against the file with `cat -n` and correct the ones that are off.
 
