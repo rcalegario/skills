@@ -9,7 +9,7 @@ Agent skills I wrote or forked, for Claude Code and other agents that read `SKIL
 | `spec-lite` | Lightweight spec-driven flow for personal and small projects |
 | `tlc-spec-driven` | Fork of tech-leads-club's spec-driven skill |
 | `idea-triage` | Triage new ideas against a catalog of projects |
-| `retro-report` | Retro over the sessions no retro has read yet, with its fixes tracked as a roadmap |
+| `retro-report` | Retro over the sessions no retro has read yet, minus those a triage judged skip (`pending --all` or a named session reaches them), with its fixes tracked as a roadmap |
 | `code-review` | Review a diff on separate axes, with structured findings that `/flow` can record |
 
 ## Install

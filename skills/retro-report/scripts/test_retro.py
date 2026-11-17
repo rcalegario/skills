@@ -398,13 +398,13 @@ def session_log(home, folder, sid, mtime):
     return path
 
 
-def pending(tmp_path, capsys, monkeypatch, current=None, cmd="pending"):
+def pending(tmp_path, capsys, monkeypatch, current=None, cmd="pending", all_=False):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     if current:
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", current)
     else:
         monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
-    return run(capsys, "--config", str(tmp_path / "config.yaml"), cmd)
+    return run(capsys, "--config", str(tmp_path / "config.yaml"), cmd, *(["--all"] if all_ else []))
 
 
 def test_pending_lists_project_sessions(tmp_path, capsys, monkeypatch):
@@ -546,3 +546,407 @@ def test_due_threshold_missing_or_wrong(tmp_path, capsys, monkeypatch):
     for value, problem in ((None, "missing"), (0, "must be a positive whole number")):
         path = config(tmp_path, threshold=value)
         assert due(tmp_path, capsys, monkeypatch) == (1, "", f"{path}: threshold: {problem}; see config.example.yaml\n")
+
+
+LIMITS = {"failures": 4, "repeats": 1, "search_streaks": 2, "compactions": 1, "interruptions": 1,
+          "denials": 1, "api_errors": 1, "active_s": 3600, "cost_usd": 10}
+
+
+def triage_config(tmp_path, triage="default", **cfg):
+    """A config.yaml whose triage block is the decided one, or the one given (None drops it)."""
+    if triage == "default":
+        triage = {"min_calls": 10, "limits": dict(LIMITS)}
+    return config(tmp_path, **({"triage": triage} if triage is not None else {}), **cfg)
+
+
+def session_file(tmp_path, sid="s-1", project="/work/repo", **fields):
+    """A session-log file: a clean 20-call session, changed by fields."""
+    data = {"session": sid, "project": project, "start": "2026-11-14T10:01:00Z", "title": "Do it",
+            "calls": {"total": 20, "by_tool": {"Bash": 20}}, "failures": {}, "repeats": [], "search_streaks": [],
+            "compactions": [], "interruptions": 0, "denials": {}, "api_errors": {}, "active_s": 600,
+            "cost_usd": 1.5, **fields}
+    path = tmp_path / "sessions" / f"{sid}.yaml"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(yaml.safe_dump(data))
+    return path
+
+
+def day_file(tmp_path, day="2026-11-14"):
+    path = tmp_path / "retros" / "triage" / f"{day}-triage.yaml"
+    return yaml.safe_load(path.read_text()) if path.is_file() else None
+
+
+def triage(tmp_path, capsys, *paths):
+    return run(capsys, "--config", str(tmp_path / "config.yaml"), "triage", *map(str, paths))
+
+
+def test_triage_worth_names_each_rule(tmp_path, capsys):
+    triage_config(tmp_path)
+    s = session_file(tmp_path, failures={"other": [{"call": 1}] * 3, "file_missing": [{"call": 2}] * 2},
+                     search_streaks=[{}, {}], compactions=[{}], interruptions=1, denials={"rule": 1},
+                     api_errors={"overloaded": 1}, repeats=[{}], active_s=3600, cost_usd=12.5)
+    code, out, err = triage(tmp_path, capsys, s)
+    reasons = ["failures 5 >= 4", "repeats 1 >= 1", "search_streaks 2 >= 2", "compactions 1 >= 1",
+               "interruptions 1 >= 1", "denials 1 >= 1", "api_errors 1 >= 1", "active_s 3600 >= 3600",
+               "cost_usd 12.5 >= 10"]
+    assert (code, err) == (0, "")
+    assert out == f"s-1 worth: {'; '.join(reasons)}\n"
+    assert day_file(tmp_path)[0]["reasons"] == reasons
+    assert day_file(tmp_path)[0]["verdict"] == "worth"
+
+
+def test_triage_reads_and_writes_utf8(tmp_path, capsys):
+    """Session files and day files are UTF-8 whatever the locale: under cp1252, "Á" (bytes C3 81) failed to
+    read, and "ã" came back as "Ã£"."""
+    triage_config(tmp_path)
+    s = session_file(tmp_path, title="Do it")
+    s.write_bytes(s.read_bytes().replace(b"Do it", "Árvore de sessão".encode("utf-8")))
+    code, out, err = triage(tmp_path, capsys, s)
+    assert (code, err) == (0, "")
+    path = tmp_path / "retros" / "triage" / "2026-11-14-triage.yaml"
+    assert yaml.safe_load(path.read_bytes().decode("utf-8"))[0]["title"] == "Árvore de sessão"
+
+
+def test_triage_skip_clean_and_small(tmp_path, capsys):
+    triage_config(tmp_path)
+    clean = session_file(tmp_path, "clean", failures={"other": [{}] * 3}, search_streaks=[{}], cost_usd=9.99)
+    small = session_file(tmp_path, "small", calls={"total": 9}, failures={"other": [{}] * 9}, repeats=[{}])
+    code, out, err = triage(tmp_path, capsys, clean, small)
+    assert (code, err) == (0, "")
+    assert out == "clean skip\nsmall skip: calls 9 < 10\n"
+    assert [(e["session"], e["verdict"], e["reasons"]) for e in day_file(tmp_path)] == [
+        ("clean", "skip", []), ("small", "skip", ["calls 9 < 10"])]
+
+
+def test_triage_null_cost_and_absent_rule(tmp_path, capsys):
+    limits = {k: v for k, v in LIMITS.items() if k != "repeats"}
+    triage_config(tmp_path, triage={"min_calls": 10, "limits": limits})
+    s = session_file(tmp_path, cost_usd=None, repeats=[{}, {}, {}])
+    assert triage(tmp_path, capsys, s) == (0, "s-1 skip\n", "")
+
+
+def test_triage_day_file_replaces_entry(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("TZ", "Pacific/Kiritimati")          # UTC+14: 10:01Z on the 14th is the 15th locally
+    import time
+    time.tzset()
+    triage_config(tmp_path)
+    a = session_file(tmp_path, "a")
+    b = session_file(tmp_path, "b", repeats=[{}])
+    triage(tmp_path, capsys, a, b)
+    session_file(tmp_path, "a", compactions=[{}])
+    assert triage(tmp_path, capsys, a)[0] == 0
+    local_day = datetime.datetime.fromisoformat("2026-11-14T10:01:00+00:00").astimezone().date()
+    entries = day_file(tmp_path, local_day.isoformat())          # 2026-11-15 wherever tzset applies the TZ
+    assert [(e["session"], e["verdict"]) for e in entries] == [("b", "worth"), ("a", "worth")]
+    assert entries[1] == {"session": "a", "project": "/work/repo", "title": "Do it", "verdict": "worth",
+                          "reasons": ["compactions 1 >= 1"], "judged": datetime.date.today().isoformat()}
+
+
+def test_triage_outside_projects(tmp_path, capsys):
+    triage_config(tmp_path)
+    inside = session_file(tmp_path, "in", project="/work/repo/tasks/x/repos/y")
+    outside = session_file(tmp_path, "out", project="/work/repository")
+    code, out, err = triage(tmp_path, capsys, inside, outside)
+    assert (code, out) == (0, "in skip\nout not judged: /work/repository is not in projects\n")
+    assert [e["session"] for e in day_file(tmp_path)] == ["in"]
+
+
+def test_triage_config_block(tmp_path, capsys, monkeypatch):
+    s = session_file(tmp_path)
+    path = triage_config(tmp_path, triage=None)
+    assert triage(tmp_path, capsys, s) == (1, "", f"{path}: triage: missing; see config.example.yaml\n")
+    path = triage_config(tmp_path, triage={"min_calls": 0, "limits": {"failures": "many", "typo": 1}})
+    assert triage(tmp_path, capsys, s)[2].splitlines() == [
+        f"{path}: triage.min_calls: must be a positive whole number; see config.example.yaml",
+        f"{path}: triage.limits.failures: must be a positive number; see config.example.yaml",
+        f"{path}: triage.limits.typo: not a rule (failures, repeats, search_streaks, compactions, interruptions, "
+        "denials, api_errors, active_s, cost_usd); see config.example.yaml"]
+    triage_config(tmp_path, triage=None)
+    assert pending(tmp_path, capsys, monkeypatch)[0] == 0
+    assert run(capsys, "--config", str(path), "check")[0] == 0
+
+
+def test_triage_bad_session_file(tmp_path, capsys):
+    triage_config(tmp_path)
+    broken = tmp_path / "broken.yaml"
+    broken.write_text("session: [")
+    code, out, err = triage(tmp_path, capsys, broken, tmp_path / "gone.yaml")
+    assert code == 1 and day_file(tmp_path) is None
+    assert len(err.splitlines()) == 2
+
+
+def test_example_config_limits(tmp_path):
+    example = yaml.safe_load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                               "config.example.yaml")))
+    assert example["triage"] == {"min_calls": 10, "limits": LIMITS}
+
+
+def test_triage_lock_held_leaves_file(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(retro, "LOCK_WAIT_S", 0.2)
+    triage_config(tmp_path)
+    a = session_file(tmp_path, "a")
+    assert triage(tmp_path, capsys, a)[0] == 0
+    day = tmp_path / "retros" / "triage" / "2026-11-14-triage.yaml"
+    before = day.read_text()
+    lock = day.with_name(day.name + ".lock")
+    lock.write_text("")                                      # another writer holds it
+    code, out, err = triage(tmp_path, capsys, session_file(tmp_path, "b", repeats=[{}]))
+    assert (code, out) == (1, "")
+    assert len(err.splitlines()) == 1 and "locked" in err
+    assert day.read_text() == before and lock.exists()
+    lock.unlink()
+    assert triage(tmp_path, capsys, tmp_path / "sessions" / "b.yaml")[0] == 0
+    assert [e["session"] for e in day_file(tmp_path)] == ["a", "b"] and not lock.exists()
+
+
+def test_triage_takes_a_stale_lock(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(retro, "LOCK_WAIT_S", 0.2)
+    triage_config(tmp_path)
+    lock = tmp_path / "retros" / "triage" / "2026-11-14-triage.yaml.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("")
+    os.utime(lock, (1, 1))                                   # left behind by a writer that died
+    assert triage(tmp_path, capsys, session_file(tmp_path))[0] == 0
+    assert [e["session"] for e in day_file(tmp_path)] == ["s-1"] and not lock.exists()
+
+
+def hook(tmp_path, capsys, monkeypatch, stdin, cfg=None):
+    import io
+    monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
+    return run(capsys, "--config", str(cfg or tmp_path / "config.yaml"), "triage", "--hook")
+
+
+def test_triage_hook_reads_path_never_fails(tmp_path, capsys, monkeypatch):
+    triage_config(tmp_path)
+    s = session_file(tmp_path, repeats=[{}])
+    assert hook(tmp_path, capsys, monkeypatch, f"{s}\n") == (0, "s-1 worth: repeats 1 >= 1\n", "")
+    assert day_file(tmp_path)[0]["verdict"] == "worth"
+    assert hook(tmp_path, capsys, monkeypatch, "") == (0, "", "")              # session-log wrote nothing
+    outside = session_file(tmp_path, "out", project="/elsewhere")
+    assert hook(tmp_path, capsys, monkeypatch, str(outside))[::2] == (0, "")
+    broken = tmp_path / "broken.yaml"
+    broken.write_text("session: [")
+    for stdin, cfg in [(str(tmp_path / "gone.yaml"), None), (str(broken), None),
+                       (str(s), tmp_path / "none.yaml"), (str(s), triage_config(tmp_path / "sessions", triage=None))]:
+        code, out, err = hook(tmp_path, capsys, monkeypatch, stdin, cfg)
+        assert code == 0, stdin
+        assert len(err.strip().splitlines()) == 1, (stdin, err)
+    monkeypatch.setattr(retro, "judge", lambda session, triage: 1 / 0)
+    code, out, err = hook(tmp_path, capsys, monkeypatch, str(s))
+    assert code == 0 and "ZeroDivisionError" in err
+
+
+def test_triage_hook_without_pyyaml_exits_0():
+    import subprocess
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "retro.py")
+    code = ("import runpy, sys; sys.modules['yaml'] = None; "
+            f"sys.argv = [{script!r}, 'triage', '--hook']; runpy.run_path({script!r}, run_name='__main__')")
+    done = subprocess.run([sys.executable, "-c", code], input="", capture_output=True, text=True)
+    assert done.returncode == 0
+    assert len(done.stderr.strip().splitlines()) == 1 and "PyYAML" in done.stderr
+
+
+def test_triage_hook_takes_no_files(tmp_path, capsys):
+    import pytest
+    for argv in (["triage", "--hook", "a.yaml"], ["triage"]):
+        with pytest.raises(SystemExit) as exc:
+            retro.main(["--config", str(tmp_path / "config.yaml"), *argv])
+        assert exc.value.code == 2
+
+
+def test_malformed_triage_block_leaves_pending_due_and_check(tmp_path, capsys, monkeypatch):
+    path = triage_config(tmp_path, triage={"min_calls": "ten"})
+    for cmd in ("pending", "due"):
+        assert pending(tmp_path, capsys, monkeypatch, cmd=cmd)[::2] == (0, "")
+    assert run(capsys, "--config", str(path), "check")[0] == 0
+    assert triage(tmp_path, capsys, session_file(tmp_path))[0] == 1
+
+
+def test_triage_block_shapes(tmp_path, capsys):
+    s = session_file(tmp_path)
+    for block, problems in [
+            ("all", ["triage: must be a mapping with min_calls and limits"]),
+            ({"min_calls": True, "limits": 5}, ["triage.min_calls: must be a positive whole number",
+                                                 "triage.limits: must be a mapping of rule to limit"]),
+            ({"min_calls": 3}, ["triage.limits: must be a mapping of rule to limit"]),
+            ({"min_calls": 3, "limits": {"failures": -1, "repeats": True, "cost_usd": 0.5}},
+             ["triage.limits.failures: must be a positive number", "triage.limits.repeats: must be a positive number"])]:
+        path = triage_config(tmp_path, triage=block)
+        assert triage(tmp_path, capsys, s) == (1, "", "".join(
+            f"{path}: {p}; see config.example.yaml\n" for p in problems)), block
+
+
+def test_triage_broken_day_file(tmp_path, capsys):
+    triage_config(tmp_path)
+    day = tmp_path / "retros" / "triage" / "2026-11-14-triage.yaml"
+    day.parent.mkdir(parents=True)
+    for text, problem in [("session: a\n", "not a list of triage entries"), ("- a\n", "not a list of triage entries"),
+                          ("[", "not valid YAML")]:
+        day.write_text(text)
+        code, out, err = triage(tmp_path, capsys, session_file(tmp_path), session_file(tmp_path, "b"))
+        assert (code, out) == (1, ""), text
+        assert err.splitlines() == [f"{day}: {problem}" if problem.startswith("not a list") else err.splitlines()[0]] * 2
+        assert problem in err and day.read_text() == text
+        assert not day.with_name(day.name + ".lock").exists()
+
+
+def test_triage_bad_session_files_one_line_each(tmp_path, capsys):
+    triage_config(tmp_path)
+    cases = {"list": "- a\n", "no_project": "session: x\ncalls: {total: 20}\nstart: '2026-11-14T10:01:00Z'\n",
+             "no_calls": "session: x\nproject: /work/repo\nstart: '2026-11-14T10:01:00Z'\n",
+             "bad_start": "session: x\nproject: /work/repo\ncalls: {total: 20}\nstart: 5\n"}
+    paths = []
+    for name, text in cases.items():
+        paths.append(tmp_path / f"{name}.yaml")
+        paths[-1].write_text(text)
+    good = session_file(tmp_path)
+    code, out, err = triage(tmp_path, capsys, *paths, good)
+    assert (code, out) == (1, "s-1 skip\n")
+    lines = err.splitlines()
+    assert len(lines) == 4 and all(f"{p}: not a session-log file (" in line for p, line in zip(paths, lines))
+
+
+def test_triage_write_failure_is_one_line(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(retro, "LOCK_WAIT_S", 0.2)
+    triage_config(tmp_path)
+    monkeypatch.setattr(retro.os, "replace", lambda a, b: (_ for _ in ()).throw(PermissionError("in use")))
+    code, out, err = triage(tmp_path, capsys, session_file(tmp_path), session_file(tmp_path, "b"))
+    assert (code, out) == (1, "")
+    assert len(err.splitlines()) == 2 and "cannot write: in use" in err
+    assert not list((tmp_path / "retros" / "triage").glob("*.tmp"))
+
+
+def test_triage_lock_taken_away_still_records(tmp_path, capsys, monkeypatch):
+    triage_config(tmp_path)
+    replace = os.replace
+
+    def stale_takeover(a, b):                                  # another writer took the lock as stale meanwhile
+        os.remove(str(b) + ".lock")
+        replace(a, b)
+    monkeypatch.setattr(retro.os, "replace", stale_takeover)
+    assert triage(tmp_path, capsys, session_file(tmp_path)) == (0, "s-1 skip\n", "")
+
+
+def test_triage_lock_released_mid_wait(tmp_path, capsys, monkeypatch):
+    import threading
+    monkeypatch.setattr(retro, "LOCK_WAIT_S", 3)
+    triage_config(tmp_path)
+    lock = tmp_path / "retros" / "triage" / "2026-11-14-triage.yaml.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("")
+    threading.Timer(0.3, lock.unlink).start()
+    assert triage(tmp_path, capsys, session_file(tmp_path)) == (0, "s-1 skip\n", "")
+
+
+def test_triage_concurrent_writers_keep_every_verdict(tmp_path):
+    import threading
+    cfg, errors = retro.load_triage_config(triage_config(tmp_path))
+    paths = [session_file(tmp_path, f"s{i}") for i in range(8)]
+    threads = [threading.Thread(target=retro.triage_session, args=(cfg, p)) for p in paths]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(e["session"] for e in day_file(tmp_path)) == [f"s{i}" for i in range(8)]
+
+
+def test_triage_hook_messages_and_several_paths(tmp_path, capsys, monkeypatch):
+    triage_config(tmp_path)
+    good = session_file(tmp_path, repeats=[{}])
+    gone = tmp_path / "gone.yaml"
+    code, out, err = hook(tmp_path, capsys, monkeypatch, f"{gone}\n{good}\n")
+    assert (code, out) == (0, "s-1 worth: repeats 1 >= 1\n")
+    assert err.splitlines() == [err.splitlines()[0]] and f"{gone}: not a session-log file" in err
+    path = triage_config(tmp_path, triage=None)
+    assert hook(tmp_path, capsys, monkeypatch, str(good)) == (
+        0, "", f"retro-report triage hook: {path}: triage: missing; see config.example.yaml\n")
+    outside = session_file(tmp_path, "out", project="/elsewhere")
+    triage_config(tmp_path)
+    assert hook(tmp_path, capsys, monkeypatch, str(outside)) == (0, "out not judged: /elsewhere is not in projects\n", "")
+    assert "out" not in [e["session"] for e in day_file(tmp_path)]
+
+
+def test_triage_at_min_calls_is_judged(tmp_path, capsys):
+    triage_config(tmp_path)
+    assert triage(tmp_path, capsys, session_file(tmp_path, calls={"total": 10}, repeats=[{}]))[1] == (
+        "s-1 worth: repeats 1 >= 1\n")
+
+
+def verdicts(tmp_path, day="2026-11-14", **by_session):
+    """A day file under retros/triage with one entry per session: verdict."""
+    path = tmp_path / "retros" / "triage" / f"{day}-triage.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump([{"session": s, "verdict": v, "reasons": []} for s, v in by_session.items()]))
+    return path
+
+
+def judged_logs(tmp_path):
+    config(tmp_path, threshold=2)
+    home = tmp_path / "home"
+    logs = {sid: session_log(home, "-work-repo", sid, 100 + n) for n, sid in enumerate(["a", "b", "c", "d"])}
+    verdicts(tmp_path, a="skip", b="worth")
+    verdicts(tmp_path, "2026-11-15", c="skip")
+    return logs
+
+
+def test_pending_leaves_out_skipped(tmp_path, capsys, monkeypatch):
+    logs = judged_logs(tmp_path)
+    assert pending(tmp_path, capsys, monkeypatch) == (0, f"{logs['b']}\n{logs['d']}\n", "")
+    assert pending(tmp_path, capsys, monkeypatch, cmd="due") == (0, "2\n", "")
+
+
+def test_pending_all_lists_skipped(tmp_path, capsys, monkeypatch):
+    logs = judged_logs(tmp_path)
+    assert pending(tmp_path, capsys, monkeypatch, all_=True) == (
+        0, "".join(f"{logs[s]}\n" for s in "abcd"), "")
+
+
+def test_broken_day_file_stops_pending_and_due(tmp_path, capsys, monkeypatch):
+    config(tmp_path)
+    session_log(tmp_path / "home", "-work-repo", "a", 100)
+    day = verdicts(tmp_path)
+    for text, problem in [("[", "not valid YAML"), ("session: a\n", "not a list of triage entries")]:
+        day.write_text(text)
+        for cmd in ("pending", "due"):
+            code, out, err = pending(tmp_path, capsys, monkeypatch, cmd=cmd)
+            assert (code, out) == (1, ""), (text, cmd)
+            assert err.startswith(f"{day}: {problem}") and len(err.splitlines()) == 1
+
+
+def test_record_retries_replace_while_read(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(retro, "LOCK_WAIT_S", 0.5)
+    triage_config(tmp_path)
+    replace, refusals = os.replace, [PermissionError("a reader has it open")] * 2
+
+    def held_by_a_reader(a, b):                                # Windows: a reader still has the day file open
+        if refusals:
+            raise refusals.pop()
+        replace(a, b)
+    monkeypatch.setattr(retro.os, "replace", held_by_a_reader)
+    assert triage(tmp_path, capsys, session_file(tmp_path)) == (0, "s-1 skip\n", "")
+    assert [e["session"] for e in day_file(tmp_path)] == ["s-1"]
+
+
+def test_unreadable_and_several_broken_day_files(tmp_path, capsys, monkeypatch):
+    config(tmp_path)
+    session_log(tmp_path / "home", "-work-repo", "a", 100)
+    broken = verdicts(tmp_path)
+    broken.write_text("[")
+    unreadable = tmp_path / "retros" / "triage" / "2026-11-15-triage.yaml"
+    unreadable.mkdir()                                          # reading it raises an OSError
+    for cmd in ("pending", "due"):
+        code, out, err = pending(tmp_path, capsys, monkeypatch, cmd=cmd)
+        assert (code, out) == (1, ""), cmd
+        lines = err.splitlines()
+        assert len(lines) == 2 and lines[0].startswith(f"{broken}: not valid YAML")
+        assert lines[1].startswith(f"{unreadable}: cannot read: ")
+    assert pending(tmp_path, capsys, monkeypatch, all_=True)[0] == 0
+
+
+def test_odd_session_ids_in_a_day_file(tmp_path, capsys, monkeypatch):
+    config(tmp_path)
+    log = session_log(tmp_path / "home", "-work-repo", "123", 100)
+    path = tmp_path / "retros" / "triage" / "2026-11-14-triage.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("- {session: [a], verdict: skip}\n- {session: 123, verdict: skip}\n- {verdict: skip}\n")
+    assert pending(tmp_path, capsys, monkeypatch) == (0, f"{log}\n", "")

@@ -17,12 +17,12 @@ Write every file in English. Talk to the user in the language they use.
 | Argument | Mode |
 |---|---|
 | a folder holding `retro.yaml` | **roadmap** |
-| none | **report** over every pending session |
+| none | **report** over every pending session (unread, and not judged `skip` by the triage) |
 | anything else (session ids, "the last 3 sessions") | **report** over those sessions only |
 
 ## report
 
-1. **Sessions.** List them: `retro.py pending` for no argument; "the last N" are the last N lines of `pending`; a named id is the log matching `~/.claude/projects/*/<id>*.jsonl` (a prefix is enough; ask when several match). Say how many there are. None → say so and stop.
+1. **Sessions.** List them: `retro.py pending` for no argument (it leaves out the sessions the [triage](#triage) judged `skip`; `pending --all` lists them too, and a named id is read whatever its verdict); "the last N" are the last N lines of `pending`; a named id is the log matching `~/.claude/projects/*/<id>*.jsonl` (a prefix is enough; ask when several match). Say how many there are. None → say so and stop.
 2. **Folder.** Propose `<retros>/<YYYY-MM-DD>-<slug>/` (today, the slug from the sessions' main theme) and confirm it. Digest every session into it: `retro.py digest <logs> > <folder>/sessions.yaml`. Every digested session goes into `sources.sessions`, so it leaves `pending`: the Sessions table is the record of what was looked at.
 3. **Read.** From the digests, pick the sessions worth reading in depth: failures, search streaks, repeats, the highest cost and minutes. Read those logs around the flagged calls, plus the steering files and checks of the repos they worked in. Tell the user which sessions you read and why. Done when every flagged session is read or named as skipped with a reason.
 4. **Findings.** Look for candidates in each [category](#categories), with the evidence (session, what happened). Present them in order of severity, each with a proposed fix in words. The user keeps, rewords or declines each one; a declined one stays as `wontfix` with the reason when the user wants it recorded. Done when every candidate is kept, reworded or declined.
@@ -33,6 +33,12 @@ Write every file in English. Talk to the user in the language they use.
 
 - **No `roadmap.yaml` in the folder:** read `retro.yaml`. Run the ROADMAP step of the `flow` skill with `--specs <folder>` over the findings without `wontfix`: one feature per fix, or one for fixes that change the same thing together. Once the roadmap is approved, set each finding's `feature` to its roadmap id, then validate and render: those findings show as `planned`. Each feature is built later with `/flow`, its `--root` the repo the fix changes.
 - **A roadmap exists:** run `retro.py check <folder> --all` and show it. When nothing is left to do and `outcome` is empty, offer to write the Outcome, then validate and render.
+
+## Triage
+
+A SessionEnd hook judges each session as it ends, right after `session-log` writes its file (`SETUP.md` step 7): `retro.py triage --hook` reads the file's path from `sessions.py extract --hook --print-path` and records `worth` or `skip`, with the rules that fired, in `<retros>/triage/<YYYY-MM-DD>-triage.yaml`. A session is `skip` below `triage.min_calls`, and `worth` when any rule in `triage.limits` of `config.yaml` reaches its limit. Only sessions of the configured `projects` are judged.
+
+To judge sessions the hook missed, or after changing the limits: `retro.py triage <session.yaml>...` over `session-log`'s files. It prints one verdict per session and replaces each session's earlier entry.
 
 ## Categories
 

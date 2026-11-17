@@ -6,3 +6,19 @@ projects:
   - ~/Projects/home
 # threshold: pending sessions that make the band offer a retro.
 threshold: 10
+# triage: judges each session as it ends (retro.py triage), so retros read only the sessions worth one.
+# Below min_calls a session is skipped; above it, it is worth a retro when any rule reaches its limit.
+# Rules: failures (all classes), repeats, search_streaks, compactions, interruptions, denials, api_errors,
+# active_s, cost_usd (ignored when null). Remove a rule to turn it off.
+triage:
+  min_calls: 10
+  limits:
+    failures: 4
+    repeats: 1
+    search_streaks: 2
+    compactions: 1
+    interruptions: 1
+    denials: 1
+    api_errors: 1
+    active_s: 3600
+    cost_usd: 10

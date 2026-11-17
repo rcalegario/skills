@@ -42,13 +42,15 @@ Steps for a fresh clone or a new machine. Each one can run again on a machine al
 
    The variable takes several folders separated by `:`; keep any already there.
 
-7. Write each session's `session-log` file when the session ends: add a SessionEnd hook to the `hooks` block of `~/.claude/settings.json`. It needs `python3` with PyYAML, and never fails the exit. The `timeout` lifts the 1.5-second budget that SessionEnd hooks share by default, so a long log is not cut off:
+7. Write each session's `session-log` file when the session ends, and let `retro-report` judge whether it is worth a retro: add a SessionEnd hook to the `hooks` block of `~/.claude/settings.json`. It needs `python3` with PyYAML, and never fails the exit. Hooks of one event run in parallel, so the triage is piped after the extract in one command, which hands it the file it wrote. The `timeout` lifts the 1.5-second budget that SessionEnd hooks share by default, so a long log is not cut off:
 
    ```json
    "hooks": {
-     "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 ~/.claude/skills/session-log/scripts/sessions.py extract --hook", "timeout": 10}]}]
+     "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 ~/.claude/skills/session-log/scripts/sessions.py extract --hook --print-path | python3 ~/.claude/skills/retro-report/scripts/retro.py triage --hook", "timeout": 10}]}]
    }
    ```
+
+   Without `retro-report`, keep only `python3 ~/.claude/skills/session-log/scripts/sessions.py extract --hook`. The triage needs the `triage` block of `retro-report`'s `config.yaml` (step 4 copies it from `config.example.yaml`; add it to a config copied before).
 
    Keep any `SessionEnd` hooks already there, as other entries of the list.
 
