@@ -31,6 +31,24 @@ class Log:
                              "message": {"role": "user", "content": text}})
         return self
 
+    def user(self, content, **fields):
+        self.records.append({"type": "user", "sessionId": self.sid, "cwd": self.cwd, "timestamp": self._ts(),
+                             "message": {"role": "user", "content": content}, **fields})
+        return self
+
+    def command(self, name, args="", skill=False):
+        """A typed /command; a skill command is followed by the skill's body as a meta record."""
+        self.user(f"<command-name>/{name}</command-name>\n<command-message>{name}</command-message>\n"
+                  f"<command-args>{args}</command-args>")
+        if skill:
+            self.user([{"type": "text", "text": f"Base directory for this skill: /skills/{name}\n\n# {name}"}],
+                      isMeta=True)
+        return self
+
+    def record(self, **fields):
+        self.records.append({"sessionId": self.sid, "timestamp": self._ts(), **fields})
+        return self
+
     def call(self, tool, inp, result="ok", is_error=False, msg_id=None, usage=None):
         self.n += 1
         tid = f"toolu_{self.n}"
@@ -90,7 +108,7 @@ def digest(tmp_path, log, capsys):
 def test_file_matches_digest(tmp_path, capsys):
     log = Log().prompt().bash("ls").bash("git status").call("Read", {"file_path": "/work/repo/a.py"})
     d = digest(tmp_path, log, capsys)
-    assert list(d) == ["session", "project", "start", "end", "duration_s", "calls", "failures", "repeats",
+    assert list(d)[:12] == ["session", "project", "start", "end", "duration_s", "calls", "failures", "repeats",
                        "search_streaks", "tokens", "cost_usd", "subagents"]
     assert d["session"] == SID
     assert d["project"] == "/work/repo"
@@ -353,3 +371,63 @@ def test_subagent_without_meta_and_parent_tokens_apart(tmp_path, capsys):
     d = digest(tmp_path, Log().prompt().call("Agent", {"prompt": "x"}, usage=usage(1, 1, 1, 1)), capsys)
     assert d["subagents"][0]["description"] is None
     assert d["tokens"] == {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}
+
+
+def test_human_turns(tmp_path, capsys):
+    log = (Log().prompt("first")
+           .user("hidden", isMeta=True)
+           .user("summary", isCompactSummary=True)
+           .user("back from agent", origin={"kind": "peer"})
+           .user([{"type": "text", "text": "second"}], origin={"kind": "human"})
+           .user("<bash-stdout>out</bash-stdout><bash-stderr></bash-stderr>")
+           .bash("ls"))
+    assert digest(tmp_path, log, capsys)["human_turns"] == 2
+
+
+def test_active_time_and_interruptions(tmp_path, capsys):
+    log = (Log().prompt("go").bash("ls")
+           .user("[Request interrupted by user for tool use]")
+           .user([{"type": "text", "text": "[Request interrupted by user]"}])
+           .record(type="system", subtype="turn_duration", durationMs=61500)
+           .record(type="system", subtype="turn_duration", durationMs=30000))
+    d = digest(tmp_path, log, capsys)
+    assert d["interruptions"] == 2
+    assert d["active_s"] == 91
+    assert d["human_turns"] == 1
+
+
+def test_initial_prompt_after_clear(tmp_path, capsys):
+    long = "fix the parser\n" + "x" * 5000
+    log = Log().command("clear").user("<local-command-stdout></local-command-stdout>").prompt(long).prompt("next")
+    assert digest(tmp_path, log, capsys)["initial_prompt"] == long
+    assert digest(tmp_path, Log().prompt("hello").command("clear").prompt("after"), capsys)["initial_prompt"] == "hello"
+    assert digest(tmp_path, Log().bash("ls"), capsys)["initial_prompt"] is None
+
+
+def test_typed_skill_vs_builtin(tmp_path, capsys):
+    log = (Log().command("clear").command("task", "resume x", skill=True)
+           .command("compact").command("tdd", skill=True).command("model", "opus").command("task", skill=True))
+    d = digest(tmp_path, log, capsys)
+    assert d["skills"] == {"task": 2, "tdd": 1}
+    assert d["commands"] == {"clear": 1, "compact": 1, "model": 1}
+
+
+def test_skill_tool_counted(tmp_path, capsys):
+    log = Log().command("task", skill=True).call("Skill", {"skill": "tdd"}).call("Skill", {"skill": "task", "args": "x"})
+    assert digest(tmp_path, log, capsys)["skills"] == {"task": 2, "tdd": 1}
+
+
+def test_start_skill(tmp_path, capsys):
+    log = Log().command("clear").command("task", "resume\nthe log", skill=True).prompt("yes")
+    d = digest(tmp_path, log, capsys)
+    assert d["start_skill"] == {"name": "task", "args": "resume\nthe log"}
+    assert d["initial_prompt"].startswith("<command-name>/task</command-name>")
+    assert digest(tmp_path, Log().command("model", "opus").prompt("go"), capsys)["start_skill"] is None
+    assert digest(tmp_path, Log().prompt("go").command("task", skill=True), capsys)["start_skill"] is None
+
+
+def test_commands_quoted_in_summaries_are_not_typed(tmp_path, capsys):
+    log = (Log().command("clear")
+           .user("Summary: ran <command-name>/x</command-name>", isCompactSummary=True)
+           .user("<command-name>/y</command-name>", origin={"kind": "peer"}))
+    assert digest(tmp_path, log, capsys)["commands"] == {"clear": 1}

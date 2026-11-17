@@ -47,6 +47,14 @@ WRITE_FLAGS = {"-i", "-delete"}
 TOKEN_FIELDS = {"input": "input_tokens", "output": "output_tokens",
                 "cache_read": "cache_read_input_tokens", "cache_write": "cache_creation_input_tokens"}
 
+# User text that the harness wrote, not the human: command output and interruption notes.
+NOT_TYPED = ("<local-command-stdout>", "<local-command-stderr>", "<bash-stdout>", "<bash-stderr>",
+             "[Request interrupted")
+
+COMMAND_NAME = re.compile(r"<command-name>/?([^<]+)</command-name>")
+COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
+SKILL_BODY = "Base directory for this skill"
+
 
 class NotASessionLog(Exception):
     pass
@@ -88,6 +96,80 @@ def calls(records):
                 call["result"] = result_text(block.get("content"))
                 call["is_error"] = bool(block.get("is_error"))
     return out
+
+
+def user_text(rec):
+    """The text of a user record; None when it holds a tool result."""
+    content = (rec.get("message") or {}).get("content")
+    if isinstance(content, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return None
+        content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+    return content if isinstance(content, str) else None
+
+
+def prompt_text(rec):
+    """The text of a user record a human typed or pasted, else None: harness notes, compact summaries,
+    tool results and subagent hand-backs are not. The harness output in NOT_TYPED passes, for callers
+    to count apart."""
+    if rec.get("type") != "user" or rec.get("isMeta") or rec.get("isCompactSummary"):
+        return None
+    if (rec.get("origin") or {}).get("kind", "human") != "human":
+        return None
+    text = user_text(rec)
+    return text if text and text.strip() else None
+
+
+def prompt_texts(records):
+    return [t for t in map(prompt_text, records) if t]
+
+
+def typed_commands(records):
+    """Each typed /command: {name, args, skill, text}. A skill command is the one whose next user record is
+    the skill's body, which the harness adds as a meta record; built-ins have none."""
+    users = [r for r in records if r.get("type") == "user"]
+    out = []
+    for i, rec in enumerate(users):
+        text = prompt_text(rec)
+        name = command_name(text or "")
+        if not name:
+            continue
+        nxt = users[i + 1] if i + 1 < len(users) else {}
+        args = COMMAND_ARGS.search(text)
+        out.append({"name": name, "args": args.group(1) if args else "", "text": text,
+                    "skill": bool(nxt.get("isMeta")) and (user_text(nxt) or "").startswith(SKILL_BODY)})
+    return out
+
+
+def skill_counts(commands, call_list):
+    names = [c["name"] for c in commands if c["skill"]]
+    names += [c["input"].get("skill") for c in call_list if c["tool"] == "Skill" and c["input"].get("skill")]
+    return dict(sorted(Counter(names).items()))
+
+
+def start_skill(first, commands):
+    """The skill that opened the session: its command is the first prompt."""
+    c = next((c for c in commands if c["text"] == first), None)
+    return {"name": c["name"], "args": c["args"]} if c and c["skill"] else None
+
+
+def command_name(text):
+    """The name of a typed /command, or None when the text is not one."""
+    m = COMMAND_NAME.search(text)
+    return m.group(1).strip() if m else None
+
+
+def initial_prompt(prompts):
+    """The first prompt the human typed, past any /clear that opens the session."""
+    typed = [t for t in prompts if not t.startswith(NOT_TYPED)]
+    while typed and command_name(typed[0]) == "clear":
+        typed.pop(0)
+    return typed[0] if typed else None
+
+
+def active_s(records):
+    return int(sum(r.get("durationMs") or 0 for r in records
+                   if r.get("type") == "system" and r.get("subtype") == "turn_duration") / 1000)
 
 
 def result_text(content):
@@ -233,6 +315,9 @@ def digest(paths):
     project = next((r["cwd"] for r in records if r.get("cwd")), None)
     stamps = sorted((r["timestamp"] for r in records if r.get("timestamp")), key=_time)
     call_list = calls(records)
+    prompts = prompt_texts(records)
+    first = initial_prompt(prompts)
+    commands = typed_commands(records)
     return {
         "session": session,
         "project": project,
@@ -246,6 +331,13 @@ def digest(paths):
         "tokens": tokens(records),
         "cost_usd": cost_usd(records),
         "subagents": [a for path in paths for a in subagents(path)],
+        "human_turns": sum(not t.startswith(NOT_TYPED) for t in prompts),
+        "interruptions": sum(t.startswith("[Request interrupted") for t in prompts),
+        "active_s": active_s(records),
+        "initial_prompt": first,
+        "start_skill": start_skill(first, commands),
+        "skills": skill_counts(commands, call_list),
+        "commands": dict(sorted(Counter(c["name"] for c in commands if not c["skill"]).items())),
     }
 
 
