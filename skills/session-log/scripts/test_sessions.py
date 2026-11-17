@@ -333,7 +333,8 @@ def test_subagents_apart(tmp_path, capsys):
     (sub_dir / "agent-a1.meta.json").write_text('{"agentType": "general-purpose", "description": "Standards review"}')
     d = digest(tmp_path, Log().prompt().call("Agent", {"prompt": "review"}), capsys)
     assert d["calls"] == {"total": 1, "by_tool": {"Agent": 1}}
-    assert d["subagents"] == [{"id": "a1", "description": "Standards review", "calls": 2,
+    assert d["subagents"] == [{"id": "a1", "type": "general-purpose", "description": "Standards review", "calls": 2,
+                               "by_tool": {"Bash": 2}, "skills": {},
                                "tokens": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4}}]
 
 
@@ -370,6 +371,7 @@ def test_subagent_without_meta_and_parent_tokens_apart(tmp_path, capsys):
     Log().prompt().bash("ls", usage=usage(7, 7, 7, 7)).write(sub_dir / "agent-b2.jsonl")
     d = digest(tmp_path, Log().prompt().call("Agent", {"prompt": "x"}, usage=usage(1, 1, 1, 1)), capsys)
     assert d["subagents"][0]["description"] is None
+    assert d["subagents"][0]["type"] is None
     assert d["tokens"] == {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}
 
 
@@ -515,3 +517,18 @@ def test_empty_values(tmp_path, capsys):
         "environment": {"branches": [], "versions": [], "entrypoint": None, "permission_modes": [], "efforts": []},
         "models": {}, "lines": {"added": 0, "removed": 0}, "edited_files": [], "denials": {}, "api_errors": {},
         "prs": []}
+
+
+def test_subagent_type_and_counts(tmp_path, capsys):
+    sub_dir = tmp_path / SID / "subagents"
+    sub_dir.mkdir(parents=True)
+    (Log().prompt("review").bash("ls").call("Skill", {"skill": "code-review"}).call("Read", {"file_path": "/a"})
+     .write(sub_dir / "agent-a1.jsonl"))
+    (sub_dir / "agent-a1.meta.json").write_text('{"agentType": "Explore", "description": "Find callers"}')
+    d = digest(tmp_path, Log().prompt().call("Agent", {"prompt": "review"}), capsys)
+    sub = d["subagents"][0]
+    assert {k: sub[k] for k in ("type", "description", "calls", "by_tool", "skills")} == {
+        "type": "Explore", "description": "Find callers", "calls": 3,
+        "by_tool": {"Bash": 1, "Read": 1, "Skill": 1}, "skills": {"code-review": 1}}
+    assert d["skills"] == {}
+    assert d["calls"]["by_tool"] == {"Agent": 1}

@@ -335,20 +335,24 @@ def cost_usd(records):
 
 
 def subagents(path):
-    """Each subagent log beside the session (<session>/subagents/agent-<id>.jsonl), digested apart."""
+    """Each subagent log beside the session (<session>/subagents/agent-<id>.jsonl), digested apart: its
+    counts are its own and never added to the session's."""
     out = []
     for log in sorted((Path(path).parent / Path(path).stem / "subagents").glob("agent-*.jsonl")):
         try:
             records = read_records(log)
         except NotASessionLog:
             continue
-        meta = log.with_suffix(".meta.json")
+        meta_path = log.with_suffix(".meta.json")
         try:
-            description = json.loads(meta.read_text()).get("description") if meta.is_file() else None
+            meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
         except ValueError:
-            description = None
-        out.append({"id": log.stem.removeprefix("agent-"), "description": description,
-                    "calls": len(calls(records)), "tokens": tokens(records)})
+            meta = {}
+        call_list = calls(records)
+        out.append({"id": log.stem.removeprefix("agent-"), "type": meta.get("agentType"),
+                    "description": meta.get("description"), "calls": len(call_list),
+                    "by_tool": dict(sorted(Counter(c["tool"] for c in call_list).items())),
+                    "skills": skill_counts(typed_commands(records), call_list), "tokens": tokens(records)})
     return out
 
 
