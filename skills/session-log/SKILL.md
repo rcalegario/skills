@@ -11,4 +11,6 @@ disable-model-invocation: true
 - No argument: run `extract`. It reads every session log under `~/.claude/projects/` and writes `<out>/<YYYY-MM-DD>/<session-id>.yaml` for each one whose file is missing or older than its log (the date is the session's local start date).
 - Log paths as arguments: run `extract <logs>`, which writes those files whatever their age.
 
+A SessionEnd hook (`extract --hook`, set up by the repo's SETUP.md) writes each session's file when it ends, so a run by hand only catches what the hook missed.
+
 Report the line it prints (`N written, M up to date, K not session logs`) and the `out` folder. Talk to the user in the language they use.

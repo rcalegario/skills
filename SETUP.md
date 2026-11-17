@@ -42,7 +42,17 @@ Steps for a fresh clone or a new machine. Each one can run again on a machine al
 
    The variable takes several folders separated by `:`; keep any already there.
 
-7. Enable the pre-commit hook. It checks `skills.yaml` and runs the tests of the repo scripts and of each skill a commit touches (each skill's command is its `test:` in `skills.yaml`). It needs [uv](https://docs.astral.sh/uv/), `python3` and the `claude` CLI:
+7. Write each session's `session-log` file when the session ends: add a SessionEnd hook to the `hooks` block of `~/.claude/settings.json`. It needs `python3` with PyYAML, and never fails the exit:
+
+   ```json
+   "hooks": {
+     "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 ~/.claude/skills/session-log/scripts/sessions.py extract --hook"}]}]
+   }
+   ```
+
+   Keep any `SessionEnd` hooks already there, as other entries of the list.
+
+8. Enable the pre-commit hook. It checks `skills.yaml` and runs the tests of the repo scripts and of each skill a commit touches (each skill's command is its `test:` in `skills.yaml`). It needs [uv](https://docs.astral.sh/uv/), `python3` and the `claude` CLI:
 
    ```sh
    git -C ~/Projects/skills config core.hooksPath .githooks
