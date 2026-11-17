@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 import yaml
@@ -80,7 +81,8 @@ def utc(monkeypatch):
     """Local time is UTC, so a session's date folder is the date of its timestamps."""
     monkeypatch.setenv("TZ", "UTC")
     import time
-    time.tzset()
+    if hasattr(time, "tzset"):      # Windows has none: there the local date of these 10:xx UTC times is the same
+        time.tzset()
 
 
 def config(tmp_path, **cfg):
@@ -162,6 +164,8 @@ def project_log(tmp_path, sid, folder="-work-repo", mtime=None):
 def test_scan_writes_missing_files_by_local_date(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("TZ", "Pacific/Kiritimati")          # UTC+14: 10:01Z on the 14th is the 15th locally
     import time
+    if not hasattr(time, "tzset"):
+        pytest.skip("needs time.tzset, which Windows lacks")
     time.tzset()
     project_log(tmp_path, "a")
     project_log(tmp_path, "b", folder="-work-other")
@@ -189,6 +193,21 @@ def test_scan_leaves_fresh_file(tmp_path, capsys):
     os.utime(fresh, (2000, 2000))
     assert scan(tmp_path, capsys)[1] == "0 written, 1 up to date, 0 not session logs\n"
     assert fresh.read_text() == "kept\n"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the 260-character path limit is Windows only")
+def test_scan_reaches_logs_past_the_windows_path_limit(tmp_path, capsys):
+    """A project folder name can push a log's path past 260 characters (a desktop scratch workspace): it is
+    written like any other, and the rest of the scan still runs."""
+    deep = "-" + "x" * (259 - len(str(tmp_path / "projects")))
+    long = tmp_path / "projects" / deep / "long.jsonl"
+    assert len(str(long)) > 260
+    Log(sid="long").prompt().bash("ls").write(Path("\\\\?\\" + str(long)))     # only the prefix can create it
+    project_log(tmp_path, "short")
+    code, out, err = scan(tmp_path, capsys)
+    assert code == 0, err
+    assert sorted(p.name for p in (tmp_path / "out" / "2026-11-14").iterdir()) == ["long.yaml", "short.yaml"]
+    assert scan(tmp_path, capsys)[1] == "0 written, 2 up to date, 0 not session logs\n"
 
 
 def test_scan_skips_non_session_logs(tmp_path, capsys):
@@ -223,6 +242,8 @@ def test_session_logs_in_two_folders_merge(tmp_path, capsys):
 def test_log_without_timestamps_is_not_a_session(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("TZ", "Asia/Tokyo")
     import time
+    if not hasattr(time, "tzset"):
+        pytest.skip("needs time.tzset, which Windows lacks")
     time.tzset()
     log = Log(sid="a").prompt().bash("ls")
     for r in log.records:
@@ -449,6 +470,18 @@ def test_compactions(tmp_path, capsys):
          "duration_ms": None}]
 
 
+def test_non_ascii_text_is_read_and_written_as_utf8(tmp_path, capsys):
+    """Session logs are UTF-8 whatever the locale: under cp1252, "Á" (bytes C3 81) read as a replacement
+    character and then failed to write, and "ã" came back as "Ã£"."""
+    log = Log().prompt().record(type="ai-title", aiTitle="Árvore de sessão")
+    path = tmp_path / f"{log.sid}.jsonl"
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in log.records), encoding="utf-8")
+    code, out, err = extract(tmp_path, capsys, path)
+    assert code == 0, err
+    written = (tmp_path / "out" / "2026-11-14" / f"{log.sid}.yaml").read_bytes().decode("utf-8")
+    assert yaml.safe_load(written)["title"] == "Árvore de sessão"
+
+
 def test_title_prefers_custom(tmp_path, capsys):
     log = Log().prompt().record(type="ai-title", aiTitle="First").record(type="ai-title", aiTitle="Second")
     assert digest(tmp_path, log, capsys)["title"] == "Second"
@@ -557,9 +590,9 @@ def test_opening_builtins_skipped(tmp_path, capsys):
     assert d["initial_prompt"].startswith("<command-name>/task</command-name>")
 
 
-def hook(tmp_path, capsys, monkeypatch, stdin, cfg=None):
+def hook(tmp_path, capsys, monkeypatch, stdin, cfg=None, *flags):
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
-    return run(capsys, "--config", str(cfg or config(tmp_path)), "extract", "--hook",
+    return run(capsys, "--config", str(cfg or config(tmp_path)), "extract", "--hook", *flags,
                "--projects", str(tmp_path / "projects"))
 
 
@@ -594,6 +627,31 @@ def test_hook_never_fails(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(sessions, "digest", lambda paths: 1 / 0)
     code, out, err = hook(tmp_path, capsys, monkeypatch, good)
     assert code == 0 and "ZeroDivisionError" in err
+
+
+def test_hook_prints_the_written_path(tmp_path, capsys, monkeypatch):
+    log = Log().prompt().bash("ls").write(tmp_path / "projects" / "-p" / f"{SID}.jsonl")
+    code, out, err = hook(tmp_path, capsys, monkeypatch, json.dumps({"transcript_path": str(log)}), None,
+                          "--print-path")
+    assert (code, err) == (0, "")
+    path = Path(out.strip())
+    assert out == f"{path}\n"
+    assert path == tmp_path / "out" / "2026-11-14" / f"{SID}.yaml"
+    assert yaml.safe_load(path.read_text())["session"] == SID
+
+
+def test_hook_prints_no_path_on_failure(tmp_path, capsys, monkeypatch):
+    for stdin in ["not json", "{}", json.dumps({"transcript_path": str(tmp_path / "gone.jsonl")})]:
+        code, out, err = hook(tmp_path, capsys, monkeypatch, stdin, None, "--print-path")
+        assert (code, out) == (0, ""), stdin
+        assert len(err.strip().splitlines()) == 1, (stdin, err)
+
+
+def test_print_path_needs_hook(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        sessions.main(["--config", str(config(tmp_path)), "extract", "--print-path"])
+    assert exc.value.code == 2
+    assert "--print-path" in capsys.readouterr().err
 
 
 def test_hook_without_pyyaml_exits_0():

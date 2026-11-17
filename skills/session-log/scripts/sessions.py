@@ -4,7 +4,11 @@
                                   none, for every session log under ~/.claude/projects whose file is missing
                                   or older than the log
   sessions.py extract --hook      the same for the log named by the SessionEnd hook JSON on stdin; never fails
+  sessions.py extract --hook --print-path
+                                  the same, printing only the written file's path (nothing on failure), so the
+                                  hook can pipe it into another script
 
+Every file is read and written as UTF-8, whatever the locale.
 Reads config.yaml beside this skill's SKILL.md (see config.example.yaml), or --config.
 The digest functions are a copy of retro-report's retro.py.
 """
@@ -75,7 +79,7 @@ def read_records(path):
     if not path.is_file():
         raise NotASessionLog(path)
     records = []
-    for line in path.read_text(errors="replace").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             rec = json.loads(line)
         except ValueError:
@@ -370,7 +374,7 @@ def subagents(path):
             continue
         meta_path = log.with_suffix(".meta.json")
         try:
-            meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
+            meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
         except ValueError:
             meta = {}
         call_list = calls(records)
@@ -450,7 +454,7 @@ def load_config(path):
         problem = "missing"
     else:
         try:
-            cfg = yaml.safe_load(path.read_text())
+            cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as e:
             cfg, problem = None, f"not valid YAML: {str(e).splitlines()[0]}"
         if problem is None and not (isinstance(cfg, dict) and isinstance(cfg.get("out"), str) and cfg["out"].strip()):
@@ -480,9 +484,18 @@ def write_session(out, session, logs):
         if old != path:
             old.unlink()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(d, sort_keys=False, allow_unicode=True, width=200))
+    path.write_text(yaml.safe_dump(d, sort_keys=False, allow_unicode=True, width=200), encoding="utf-8")
     os.utime(path, (newest, newest))
     return True
+
+
+def long_path(path):
+    """On Windows, an absolute drive path in its extended form, so stat, glob and open reach past 260 characters
+    (a desktop scratch workspace can make a project folder name that long)."""
+    path = os.path.abspath(path)
+    if sys.platform == "win32" and path[1:3] == ":\\":
+        path = "\\\\?\\" + path
+    return Path(path)
 
 
 def is_fresh(out, session, logs):
@@ -496,6 +509,7 @@ def extract(out, logs, projects):
     missing or stale. Returns (written, up to date, not session logs)."""
     # A session id has a log in each project folder it ran in (a moved project): its file joins them all.
     groups = {}
+    logs, projects = [long_path(log) for log in logs], long_path(projects)
     for log in logs or sorted(projects.glob("*/*.jsonl")):
         groups.setdefault(log.stem, {log}).update(projects.glob(f"*/{log.stem}.jsonl"))
     fresh = set() if logs else {s for s, group in groups.items() if is_fresh(out, s, group)}
@@ -503,9 +517,10 @@ def extract(out, logs, projects):
     return count[True], len(fresh), count[False]
 
 
-def hook(config, projects):
+def hook(config, projects, print_path=False):
     """SessionEnd hook: the session's transcript_path comes as JSON on stdin. Every failure is one stderr
-    line and exit 0, so ending a session never blocks."""
+    line and exit 0, so ending a session never blocks. With print_path, stdout carries only the written
+    file's path, for a script piped after the hook."""
     try:
         log = Path(json.load(sys.stdin)["transcript_path"])
         out, problem = load_config(config)
@@ -514,7 +529,10 @@ def hook(config, projects):
         written, _, skipped = extract(out, [log], projects)
         if skipped:
             raise RuntimeError(f"not a session log: {log}")
-        print(f"{written} written")
+        if print_path:
+            print(*session_files(out, log.stem), sep="\n")
+        else:
+            print(f"{written} written")
     except Exception as exc:  # noqa: BLE001 - a hook must never fail the session's exit
         print(f"session-log hook: {exc!r}", file=sys.stderr)
     return 0
@@ -529,14 +547,18 @@ def main(argv=None):
     e.add_argument("logs", nargs="*", help="logs to write whatever their mtime (default: every stale one)")
     e.add_argument("--hook", action="store_true",
                    help="SessionEnd hook: read the log from the hook JSON on stdin; never exit non-zero")
+    e.add_argument("--print-path", action="store_true",
+                   help="with --hook: print only the written file's path, nothing on failure")
     e.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects",
                    help="folder of the project log folders (default: ~/.claude/projects)")
     args = parser.parse_args(argv)
     if args.hook and args.logs:
         parser.error("--hook reads its log from stdin: name no logs")
+    if args.print_path and not args.hook:
+        parser.error("--print-path works only with --hook")
 
     if args.hook:
-        return hook(args.config, args.projects)
+        return hook(args.config, args.projects, args.print_path)
     out, problem = load_config(args.config)
     if problem:
         print(problem, file=sys.stderr)

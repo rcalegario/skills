@@ -13,4 +13,6 @@ disable-model-invocation: true
 
 A SessionEnd hook (`extract --hook`, set up by the repo's SETUP.md) writes each session's file when it ends, so a run by hand only catches what the hook missed.
 
+`extract --hook --print-path` prints only the written file's path (nothing on failure), so the hook command can pipe it into another script, such as `retro-report`'s triage.
+
 Report the line it prints (`N written, M up to date, K not session logs`) and the `out` folder. Talk to the user in the language they use.
