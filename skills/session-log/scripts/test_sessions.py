@@ -443,3 +443,75 @@ def test_compactions(tmp_path, capsys):
          "duration_ms": 43041},
         {"time": "2026-11-14T10:03:00Z", "trigger": "manual", "pre_tokens": 9, "post_tokens": None,
          "duration_ms": None}]
+
+
+def test_title_prefers_custom(tmp_path, capsys):
+    log = Log().prompt().record(type="ai-title", aiTitle="First").record(type="ai-title", aiTitle="Second")
+    assert digest(tmp_path, log, capsys)["title"] == "Second"
+    log.record(type="custom-title", customTitle="Mine").record(type="ai-title", aiTitle="Third")
+    assert digest(tmp_path, log, capsys)["title"] == "Mine"
+
+
+def test_environment_distinct_values(tmp_path, capsys):
+    log = Log().prompt().bash("ls").bash("pwd")
+    for rec, branch, version in zip(log.records, ["main", "main", "feat/x", "main", "feat/x"],
+                                    ["2.1.1", "2.1.1", "2.1.1", "2.1.2", "2.1.2"]):
+        rec.update(gitBranch=branch, version=version, entrypoint="cli")
+    log.records[1]["effort"] = "high"
+    log.records[3]["effort"] = "medium"
+    log.record(type="permission-mode", permissionMode="default").record(type="permission-mode", permissionMode="auto")
+    log.record(type="permission-mode", permissionMode="default")
+    assert digest(tmp_path, log, capsys)["environment"] == {
+        "branches": ["main", "feat/x"], "versions": ["2.1.1", "2.1.2"], "entrypoint": "cli",
+        "permission_modes": ["default", "auto"], "efforts": ["high", "medium"]}
+
+
+def test_models_and_lines_from_last_cost_state(tmp_path, capsys):
+    usage_ = {"inputTokens": 646, "outputTokens": 5298, "thinkingTokens": 1219, "cacheReadInputTokens": 658354,
+              "cacheCreationInputTokens": 34328, "webSearchRequests": 0, "costUSD": 0.5148388}
+    log = (Log().prompt()
+           .record(type="cost-state", totalLinesAdded=1, totalLinesRemoved=0, modelUsage={"old": usage_})
+           .record(type="cost-state", totalLinesAdded=12, totalLinesRemoved=3, modelUsage={"claude-opus-5-5": usage_}))
+    d = digest(tmp_path, log, capsys)
+    assert d["models"] == {"claude-opus-5-5": {"cost_usd": 0.5148388, "input": 646, "output": 5298,
+                                               "cache_read": 658354, "cache_write": 34328}}
+    assert d["lines"] == {"added": 12, "removed": 3}
+
+
+def test_edited_files(tmp_path, capsys):
+    log = (Log().prompt()
+           .call("Edit", {"file_path": "/work/repo/a.py"}).call("Write", {"file_path": "/other/b.md"})
+           .call("Edit", {"file_path": "/work/repo/a.py"}).call("NotebookEdit", {"notebook_path": "/work/repo/n.ipynb"})
+           .call("Read", {"file_path": "/work/repo/c.py"}))
+    assert digest(tmp_path, log, capsys)["edited_files"] == ["a.py", "/other/b.md", "n.ipynb"]
+
+
+def test_denials_and_api_errors(tmp_path, capsys):
+    log = Log().prompt().bash("rm x").bash("git push").bash("ls")
+    log.records[2]["toolDenialKind"] = "permission-rule"
+    log.records[4]["toolDenialKind"] = "user-rejected"
+    log.records[6]["toolDenialKind"] = "permission-rule"
+    log.record(type="assistant", isApiErrorMessage=True, error="server_error", message={"role": "assistant", "content": []})
+    log.record(type="assistant", isApiErrorMessage=True, error="rate_limit", message={"role": "assistant", "content": []})
+    log.record(type="assistant", isApiErrorMessage=True, error="server_error", message={"role": "assistant", "content": []})
+    d = digest(tmp_path, log, capsys)
+    assert d["denials"] == {"permission-rule": 2, "user-rejected": 1}
+    assert d["api_errors"] == {"rate_limit": 1, "server_error": 2}
+
+
+def test_prs(tmp_path, capsys):
+    pr = {"type": "pr-link", "prNumber": 12, "prUrl": "https://github.com/o/r/pull/12", "prRepository": "o/r"}
+    log = Log().prompt().record(**pr).record(**pr).record(**{**pr, "prNumber": 13, "prUrl": "https://github.com/o/r/pull/13"})
+    assert digest(tmp_path, log, capsys)["prs"] == [
+        {"number": 12, "url": "https://github.com/o/r/pull/12", "repo": "o/r"},
+        {"number": 13, "url": "https://github.com/o/r/pull/13", "repo": "o/r"}]
+
+
+def test_empty_values(tmp_path, capsys):
+    d = digest(tmp_path, Log().bash("ls"), capsys)
+    assert {k: d[k] for k in list(d)[12:]} == {
+        "human_turns": 0, "interruptions": 0, "active_s": 0, "initial_prompt": None, "start_skill": None,
+        "skills": {}, "commands": {}, "compactions": [], "title": None,
+        "environment": {"branches": [], "versions": [], "entrypoint": None, "permission_modes": [], "efforts": []},
+        "models": {}, "lines": {"added": 0, "removed": 0}, "edited_files": [], "denials": {}, "api_errors": {},
+        "prs": []}

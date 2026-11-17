@@ -44,6 +44,12 @@ SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")
 # A redirect to a file; /dev/null and &N are not writes.
 WRITE_REDIRECT = re.compile(r">>?\s*(?!/dev/null\b|&)\S")
 WRITE_FLAGS = {"-i", "-delete"}
+# Values that may change during a session: key in the file, record field.
+ENVIRONMENT_FIELDS = {"branches": "gitBranch", "versions": "version", "permission_modes": "permissionMode",
+                      "efforts": "effort"}
+MODEL_FIELDS = {"cost_usd": "costUSD", "input": "inputTokens", "output": "outputTokens",
+                "cache_read": "cacheReadInputTokens", "cache_write": "cacheCreationInputTokens"}
+EDIT_TOOLS = {"Edit", "Write", "NotebookEdit"}
 TOKEN_FIELDS = {"input": "input_tokens", "output": "output_tokens",
                 "cache_read": "cache_read_input_tokens", "cache_write": "cache_creation_input_tokens"}
 
@@ -176,6 +182,52 @@ def compactions(records):
                         "pre_tokens": meta.get("preTokens"), "post_tokens": meta.get("postTokens"),
                         "duration_ms": meta.get("durationMs")})
     return out
+
+
+def title(records):
+    """The name the user gave with /rename, else the last one the harness generated."""
+    for kind, field in (("custom-title", "customTitle"), ("ai-title", "aiTitle")):
+        titles = [r[field] for r in records if r.get("type") == kind and r.get(field)]
+        if titles:
+            return titles[-1]
+    return None
+
+
+def environment(records):
+    """Each changing value as its distinct values in order of first appearance, and the entrypoint."""
+    out = {key: list(dict.fromkeys(r[field] for r in records if r.get(field)))
+           for key, field in ENVIRONMENT_FIELDS.items()}
+    out["entrypoint"] = next((r["entrypoint"] for r in records if r.get("entrypoint")), None)
+    return {k: out[k] for k in ("branches", "versions", "entrypoint", "permission_modes", "efforts")}
+
+
+def last_cost_state(records):
+    return next((r for r in reversed(records) if r.get("type") == "cost-state"), {})
+
+
+def models(state):
+    return {model: {key: u.get(field) for key, field in MODEL_FIELDS.items()}
+            for model, u in (state.get("modelUsage") or {}).items()}
+
+
+def edited_files(call_list, cwd):
+    """Distinct files the session edited, relative to its cwd when inside it."""
+    paths = [c["input"].get("file_path") or c["input"].get("notebook_path")
+             for c in call_list if c["tool"] in EDIT_TOOLS]
+    root = (cwd or "").rstrip("/") + "/"
+    return list(dict.fromkeys(p.removeprefix(root) if cwd and p.startswith(root) else p for p in paths if p))
+
+
+def prs(records):
+    out = {}
+    for r in records:
+        if r.get("type") == "pr-link" and r.get("prUrl"):
+            out.setdefault(r["prUrl"], {"number": r.get("prNumber"), "url": r["prUrl"], "repo": r.get("prRepository")})
+    return list(out.values())
+
+
+def counted(records, field, when=lambda r: True):
+    return dict(sorted(Counter(r[field] for r in records if r.get(field) and when(r)).items()))
 
 
 def active_s(records):
@@ -329,6 +381,7 @@ def digest(paths):
     prompts = prompt_texts(records)
     first = initial_prompt(prompts)
     commands = typed_commands(records)
+    state = last_cost_state(records)
     return {
         "session": session,
         "project": project,
@@ -342,14 +395,22 @@ def digest(paths):
         "tokens": tokens(records),
         "cost_usd": cost_usd(records),
         "subagents": [a for path in paths for a in subagents(path)],
-        "human_turns": sum(not t.startswith(NOT_TYPED) for t in prompts),
-        "interruptions": sum(t.startswith("[Request interrupted") for t in prompts),
-        "active_s": active_s(records),
+        "title": title(records),
         "initial_prompt": first,
         "start_skill": start_skill(first, commands),
         "skills": skill_counts(commands, call_list),
         "commands": dict(sorted(Counter(c["name"] for c in commands if not c["skill"]).items())),
+        "human_turns": sum(not t.startswith(NOT_TYPED) for t in prompts),
+        "interruptions": sum(t.startswith("[Request interrupted") for t in prompts),
+        "active_s": active_s(records),
         "compactions": compactions(records),
+        "environment": environment(records),
+        "models": models(state),
+        "lines": {"added": state.get("totalLinesAdded", 0), "removed": state.get("totalLinesRemoved", 0)},
+        "edited_files": edited_files(call_list, project),
+        "denials": counted(records, "toolDenialKind"),
+        "api_errors": counted(records, "error", lambda r: r.get("isApiErrorMessage")),
+        "prs": prs(records),
     }
 
 
