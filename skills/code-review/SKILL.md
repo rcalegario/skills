@@ -52,9 +52,17 @@ Issue the Standards and the Spec sub-agent calls together, in the foreground. St
 
 When there is no spec, skip the Spec sub-agent.
 
-### 6. Report
+### 6. Verify the serious findings
 
-Write one section per axis, under `## Standards` and `## Spec`, with the findings in the format of `reference/findings.md`. Put `## Checks` first with what step 4 found (failures, or "none found"). Do **not** merge or rerank findings across axes: the separation exists to prevent that.
+For each axis that returned a `blocker` or `should-fix`, start **one** new sub-agent with a fresh context window and give it those findings, the diff command and the same sources as its axis. Brief: "Try to refute each finding against the code: read the surrounding code and the spec or rule it cites, and look for a guard, a caller or a requirement that makes it wrong. Answer per finding: `kept`, `downgraded to <severity>` or `dropped`, with one sentence of evidence."
+
+- `kept` and `downgraded` findings go into the report with their final severity.
+- `dropped` ones are not hidden: they go under **Dropped by verify**, with the finding and the refuter's reason, so the user can overrule.
+- `nit` findings skip this step.
+
+### 7. Report
+
+Write one section per axis, under `## Standards` and `## Spec`, with the findings in the format of `reference/findings.md`. Put `## Checks` first with what step 4 found (failures, or "none found"), and `## Dropped by verify` last. Do **not** merge or rerank findings across axes: the separation exists to prevent that.
 
 End with one line per axis: how many findings, and the worst one in that axis. Never pick a single winner across axes.
 
