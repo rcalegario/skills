@@ -19,6 +19,17 @@ Then capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, 
 
 The diff covers committed work only. When `git status --short` shows uncommitted changes, say in the report that they are not part of the review.
 
+### 1b. Check the size
+
+The size limit is **800 changed code lines**. Count with `git diff --numstat <fixed-point>...HEAD`: for each file, added plus removed lines (a binary file counts 0). Leave out lockfiles (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `Cargo.lock`, `go.sum`), snapshots (`__snapshots__/`, `*.snap`) and generated files (`*.min.*`, `dist/`, a file whose first lines say it is generated).
+
+- **800 or fewer**: go on to step 2.
+- **More than 800**: stop before any sub-agent and propose a split. Group the counted files by top-level folder and give each group its line count; when one folder holds most of the lines, split that one by commit (`git log <fixed-point>..HEAD --oneline`, each commit with its count). Show the parts and wait for the user.
+  - **Accepted**: run steps 2 to 8 once per part, with the diff command limited to the part (`git diff <fixed-point>...HEAD -- <paths>`, or the commit's own range). Write one report block per part, headed with the part's name, and no merged summary across parts.
+  - **Declined**: stop with one line: "Review stopped: diff over 800 code lines, narrow the fixed point or accept a split." No sub-agent is spawned.
+
+The number lives only here and is not an argument of the skill.
+
 ### 2. Find the spec
 
 Look for the originating spec, in this order, and stop at the first hit:
