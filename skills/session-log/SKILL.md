@@ -1,6 +1,6 @@
 ---
 name: session-log
-description: Writes one YAML file per Claude Code session (calls, failures, tokens, cost, subagents), under a folder per day, for every session whose file is missing or older than its log. /session-log [<session.jsonl>...]
+description: Writes one YAML file per Claude Code session (calls, failures, tokens, cost per model, skills, compactions, edits, title and opening prompt, subagents), under a folder per day, for every session whose file is missing or older than its log. /session-log [<session.jsonl>...]
 disable-model-invocation: true
 ---
 
