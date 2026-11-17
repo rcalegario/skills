@@ -23,7 +23,7 @@ Every status change, the roadmap approval and the feature skeleton go through th
 | Starting a task | `set <feature> T<n> doing` |
 | The task's commit is made | `set <feature> T<n> verifying` (records `HEAD`; `--commit <sha>` on resume) |
 | A criterion's checks ran | `set <feature> AC<n> pass\|fail`: a task turns `done` when every check of the criteria it covers passes, and goes back to `verifying` when one fails |
-| A review finding (or a clean review) | `finding <feature> --text T --source S --action fix --task T<n>`, `--action wontfix --reason R`, or `--none`. `S` is `spec-review`, `standards-review`, `pr-comment` (add `--comment-id N`, the GitHub comment id) or `user` |
+| A review finding (or a clean review) | `finding <feature> --text T --source S --action fix --task T<n>`, `--action wontfix --reason R`, or `--none`. `S` is `spec-review`, `standards-review`, `correctness-review`, `tests-review`, `security-review`, `pr-comment` (add `--comment-id N`, the GitHub comment id) or `user` |
 | The feature's PR is open | `pr <feature> --url U` |
 | Every task committed (`verifying` or `done`) | `review <feature>` |
 | Every check `pass` and the review recorded | `finish <feature>` |
@@ -207,7 +207,7 @@ review:                        # filled at CLOSE
     - text: AC2 test does not cover a quote inside a value
       action: fix              # fix | wontfix
       task: T3                 # fix → the task that fixes it
-      source: spec-review      # spec-review | standards-review | pr-comment | user
+      source: spec-review      # spec-review | standards-review | correctness-review | tests-review | security-review | pr-comment | user
     - text: Rename writer module
       action: wontfix
       reason: Matches the existing naming.
