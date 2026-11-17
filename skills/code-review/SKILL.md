@@ -49,7 +49,7 @@ Before any sub-agent, run the checks the repo defines, **once**: its tests, lint
 
 ### 5. Run the axes in parallel
 
-Issue the Standards, Spec, Correctness and Tests sub-agent calls together, and wait for all of them to return before step 6. Start each with a fresh context window and give it **only** the diff command, the commit list and its own sources. The sub-agent runs the diff command itself; repo files are passed as paths for it to read, and the smell baseline is pasted in full. No sub-agent sees another's sources or findings.
+Decide first whether Security runs (below), then issue the Standards, Spec, Correctness, Tests and, when it runs, Security sub-agent calls together, and wait for all of them to return before step 6. Start each with a fresh context window and give it **only** the diff command, the commit list and its own sources. The sub-agent runs the diff command itself; repo files are passed as paths for it to read, and the smell baseline is pasted in full. No sub-agent sees another's sources or findings.
 
 **Standards sub-agent**: the standards files from step 3, the smell baseline pasted in full (the sub-agent has no other access to it) and the failed checks from step 4. Brief: "Report every place the diff breaks a documented standard, citing the file and the rule, and any baseline smell you see, naming it and quoting the hunk. Documented-standard breaches can be hard; baseline smells are judgement calls, and a documented repo rule overrides the baseline. Skip anything tooling enforces or the failed checks already show. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `standards-review`. Under 400 words."
 
@@ -58,6 +58,18 @@ Issue the Standards, Spec, Correctness and Tests sub-agent calls together, and w
 **Correctness sub-agent**: no spec and no standards, only the diff command, the commit list and the failed checks from step 4. It reads the changed files at `HEAD` with line numbers. Brief: "Judge the code alone, not the spec or any style rule. Report logic errors (off-by-one, wrong operator, inverted condition, wrong return), unhandled edge cases (empty input, zero, negative, `None`, a missing key), broken error handling and state that can go wrong. For each, say the input that triggers it. Skip what the failed checks already show. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `correctness-review`. Under 400 words."
 
 **Tests sub-agent**: the diff command, the commit list, the test files the diff touches or that sit beside the changed code (as paths) and the failed checks from step 4. Brief: "Report (a) behaviour the diff adds or changes that no test exercises, including error branches, and (b) tests that would still pass if the code were wrong: no assertion, an assertion on a mock or on the input itself, a test that never reaches the changed line. Name the missing case for each. A test the failed checks already show red is a fact, not a finding. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `tests-review`. Under 400 words."
+
+**Security trigger.** The skill decides this itself, with no sub-agent, by scanning the diff's changed paths and added lines (`git diff <fixed-point>...HEAD`). Security runs when any of these shows up:
+
+- **external input**: reading request or form data, CLI arguments, environment variables, files or stdin handed in by a user, deserialising (`pickle`, `yaml.load`, `eval`);
+- **auth**: login, sessions, tokens, permissions, password handling;
+- **secrets**: keys, tokens, credentials, `.env` files, or a path or name that suggests them;
+- **shell**: `os.system`, `subprocess`, backticks, `exec`, `child_process`, a shell script;
+- **network**: HTTP clients or servers, sockets, URLs built from variables, a webhook or CORS setting.
+
+A diff that touches only docs, comments, tests or formatting triggers none. When unsure, run it. Say in the report which signal fired, or why none did.
+
+**Security sub-agent** (only when triggered): the diff command, the commit list and the failed checks from step 4, no spec and no standards. Brief: "Look only for security problems the diff introduces: command or SQL injection, unsanitised input reaching a shell, path or query, secrets in code or logs, missing or weakened auth checks, unsafe deserialisation, unvalidated URLs. Name the input and where it flows for each. This is a quick pass, not an audit. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `security-review`. Under 400 words."
 
 When there is no spec, skip the Spec sub-agent.
 
