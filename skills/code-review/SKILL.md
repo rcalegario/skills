@@ -34,42 +34,45 @@ Never ask the user to set up an issue tracker. When nothing is found, ask where 
 
 ### 3. Find the standards
 
-Search the repo for every file that documents how code is written: `CLAUDE.md` and `AGENTS.md` (root and the folders the diff touches), `CONTRIBUTING.md`, `CODING_STANDARDS.md`, style docs under `docs/`. When `CODING_STANDARDS.md` or `CONTRIBUTING.md` exists it must be on the list. Always add the user's own `~/.claude/CLAUDE.md` when it exists: it carries rules that hold in every repo.
+Search the repo for every file that documents how code is written: `CLAUDE.md` and `AGENTS.md` (root and the folders the diff touches), `CONTRIBUTING.md`, `CODING_STANDARDS.md`, style docs under `docs/`. When `CODING_STANDARDS.md` or `CONTRIBUTING.md` exists it must be on the list. Always add the user's own `~/.claude/CLAUDE.md` when it exists: it carries rules that hold in every repo. Read the files as they stand at `HEAD`; a diff that removes or weakens a documented rule is itself a Standards finding.
 
 Then attach the **smell baseline** in `reference/smells.md`, in full. It applies even when a repo documents nothing, with two rules: a documented repo standard overrides the baseline, and every smell is a labelled judgement call, never a hard violation. Skip anything tooling already enforces.
 
 ### 4. Run the repo's own checks
 
-Before any sub-agent, run the checks the repo defines, **once**: its tests, linter and type checker. Find the commands in this order: `CLAUDE.md` / `AGENTS.md`, then `Makefile`, `package.json` scripts, `pyproject.toml`, the CI config (`.github/workflows/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`). Never infer a command from a folder name (a `tests/` folder is not a command).
+Before any sub-agent, run the checks the repo defines, **once**: its tests, linter and type checker. Find the commands in this order: `CLAUDE.md` / `AGENTS.md`, then `Makefile`, `package.json` scripts, `pyproject.toml`, the CI config (`.github/workflows/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`). Never infer a command from a folder name (a `tests/` folder is not a command). Read the commands from the files at `HEAD`; when the diff itself removes or changes them, say so under **Checks**.
 
 - Run only commands that read and verify: test, lint, typecheck, format check. Never an install, build-and-deploy, migration, or any command that changes something outside the working tree.
 - Checks must leave the tree as they found it. Take `git status --short` before, run with the usual cache switches (`PYTHONDONTWRITEBYTECODE=1` for Python), and take it again after. Files the checks created are reported under **Checks** as "created by the checks" and left in place; the skill deletes nothing.
 - A failure goes under **Checks** in the report as a fact, with the command and the first failing lines. The axes do not review what a tool already proved: tell each sub-agent which checks failed so it does not repeat them.
-- When no command is found, write "Warning: no checks found" under **Checks** and go on with the review. A warning is always a line that starts with `Warning:`.
+- When no command is found for a kind of check, write "Warning: no <tests|lint|typecheck> command found" under **Checks**; when none is found at all, "Warning: no checks found". Then go on with the review. A warning is always a line that starts with `Warning:`.
 
 ### 5. Run the axes in parallel
 
-Issue the Standards and the Spec sub-agent calls together, in the foreground. Start each with a fresh context window and give it **only** the diff command, the commit list and its own sources. The sub-agent runs the diff command itself; repo files are passed as paths for it to read, and the smell baseline is pasted in full. Neither sub-agent sees the other's sources or findings.
+Issue the Standards and the Spec sub-agent calls together, and wait for both to return before step 6. Start each with a fresh context window and give it **only** the diff command, the commit list and its own sources. The sub-agent runs the diff command itself; repo files are passed as paths for it to read, and the smell baseline is pasted in full. Neither sub-agent sees the other's sources or findings.
 
 **Standards sub-agent**: the standards files from step 3, the smell baseline pasted in full (the sub-agent has no other access to it) and the failed checks from step 4. Brief: "Report every place the diff breaks a documented standard, citing the file and the rule, and any baseline smell you see, naming it and quoting the hunk. Documented-standard breaches can be hard; baseline smells are judgement calls, and a documented repo rule overrides the baseline. Skip anything tooling enforces or the failed checks already show. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `standards-review`. Under 400 words."
 
-**Spec sub-agent**: the spec from step 2 and the failed checks from step 4. Brief: "Report (a) requirements the spec asked for that are missing or partial, (b) behaviour in the diff that was not asked for, (c) requirements that look implemented but are wrong. Quote the spec line for each. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `spec-review`. Under 400 words."
+**Spec sub-agent**: the spec from step 2 and the failed checks from step 4. Brief: "Report (a) requirements the spec asked for that are missing or partial, (b) behaviour in the diff that was not asked for, (c) requirements that look implemented but are wrong. Quote the spec line for each, and judge against the spec text: a failing check is a fact, not the spec. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `spec-review`. Under 400 words."
 
 When there is no spec, skip the Spec sub-agent.
 
 ### 6. Verify the serious findings
 
-For each axis that returned a `blocker` or `should-fix`, start **one** new sub-agent with a fresh context window and give it those findings, the diff command, the same sources as its axis (for Standards, the smell baseline too) and the failed checks from step 4. Brief: "Try to refute each finding against the code: read the surrounding code and the spec or rule it cites, and look for a guard, a caller or a requirement that makes it wrong. Check every cited `file:line` against the file and correct it when it is off. Answer per finding: `kept`, `downgraded to <severity>` or `dropped`, with one sentence of evidence."
+For each axis that returned a `blocker` or `should-fix`, start **one** new sub-agent with a fresh context window and give it only the `blocker` and `should-fix` findings of that axis, the diff command, the same sources as its axis (for Standards, the smell baseline pasted in full again) and the failed checks from step 4. Brief: "Try to refute each finding against the code: read the surrounding code and the spec or rule it cites, and look for a guard, a caller or a requirement that makes it wrong. Check every cited `file:line` against the file and correct it when it is off. Answer per finding: `kept`, `downgraded to <severity>` or `dropped`, with one sentence of evidence."
 
 - `kept` and `downgraded` findings go into the report with their final severity.
 - `dropped` ones are not hidden: they go under **Dropped by verify**, with the finding and the refuter's reason, so the user can overrule.
 - `nit` findings skip this step.
+- An answer that is none of the three verdicts counts as `kept`.
 
 ### 7. Report
 
-Write one section per axis, under `## Standards` and `## Spec`, with the findings in the format of `reference/findings.md`. The order is `## Checks` (what step 4 found: failures, files the checks created, warnings), `## Standards`, `## Spec`, `## Dropped by verify`, then the summary lines. Do **not** merge or rerank findings across axes: the separation exists to prevent that.
+Before writing, check every cited `file:line`, nits included, against the file with `cat -n` and correct the ones that are off.
 
-The summary has one line per axis: how many findings, and the worst one in that axis; add a line for **Checks** when something failed. Never pick a single winner across axes.
+Write one section per axis, under `## Standards` and `## Spec`, with the findings in the format of `reference/findings.md`. The order is `## Checks` (what step 4 found: failures, files the checks created, warnings), `## Standards`, `## Spec`, `## Dropped by verify` (write "None" when nothing was dropped), then the summary lines. Do **not** merge or rerank findings across axes: the separation exists to prevent that, so a defect both axes raise stays in both.
+
+The summary has one line per axis: how many findings, and the worst one in that axis (the first of the highest severity); add a line for **Checks** when something failed or warned. Never pick a single winner across axes.
 
 ## Why separate axes
 
