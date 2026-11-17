@@ -1,11 +1,14 @@
 ---
 name: code-review
-description: "Review the changes since a fixed point (commit, branch, tag or merge-base) on separate axes, each run by its own sub-agent, and report structured findings that /flow can record. Use when the user wants to review a branch, a PR or work in progress, or asks to \"review since X\"."
+description: "Review the changes since a fixed point (commit, branch, tag or merge-base) along two axes, Standards (does the code follow this repo's documented standards?) and Spec (does it do what the spec asked?), each run by its own sub-agent in parallel and reported side by side. Use when the user wants to review a branch, a PR or work in progress, or asks to \"review since X\"."
 ---
 
-Review of the diff between `HEAD` and a fixed point the user supplies. Each axis runs as its own **sub-agent with a fresh context window**, so axes do not pollute each other; this skill gathers their findings.
+Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
-The skill only reads and reports. It edits no file and records nothing: fixes and `flow.py finding` calls belong to whoever called it.
+- **Standards**: does the code conform to this repo's documented coding standards?
+- **Spec**: does the code faithfully implement the originating spec or issue?
+
+Both axes run as **parallel sub-agents** so they don't pollute each other's context; this skill then aggregates their findings. It edits no file; given a feature folder, it records the findings in that feature's `review.yaml` through `flow.py` (step 6).
 
 ## Process
 
@@ -13,107 +16,64 @@ The skill only reads and reports. It edits no file and records nothing: fixes an
 
 Whatever the user said is the fixed point (a commit SHA, branch, tag, `main`, `HEAD~5`). `/flow` passes its `base`. If none was given, ask for it.
 
-Run `git rev-parse <fixed-point>` first. When it fails, stop with one line: "Review stopped: `<ref>` is not a valid ref."
-
-Then capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base), and the commits with `git log <fixed-point>..HEAD --oneline`. When the diff is empty, stop with one line: "Review stopped: no changes between `<ref>` and `HEAD`." No sub-agent is spawned for nothing.
-
-The diff covers committed work only. When `git status --short` shows uncommitted changes, say in the report that they are not part of the review.
-
-### 1b. Check the size
-
-The size limit is **800 changed code lines**. Count with `git diff --numstat <fixed-point>...HEAD`: for each file, added plus removed lines (a binary file counts 0). Leave out lockfiles (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `Cargo.lock`, `go.sum`), snapshots (`__snapshots__/`, `*.snap`) and generated files (`*.min.*`, `dist/`, a file whose first lines say it is generated).
-
-- **800 or fewer**: go on to step 2.
-- **More than 800**: stop before any sub-agent and propose a split. Group the counted files by top-level folder and give each group its line count and the name of the folder. When one folder holds more than half of the counted lines **and** its commits are more than one, split that folder by commit (`git log <fixed-point>..HEAD --oneline -- <folder>`, each commit with its count, named by its subject); when it has a single commit, keep the folders as the parts. A part that is still over 800 lines is shown with a note, and the user may ask for it to be split again. Show the parts and wait for the user.
-  - **Accepted**: run steps 2 to 8 once per part, with the diff command limited to the part (`git diff <fixed-point>...HEAD -- <paths>`, or the commit's own range). Every sub-agent of a part gets the part's paths and is told to review **only** those paths, running the diff command with the `-- <paths>` filter and ignoring any other file it meets. The commit list of a part holds only the commits that touch its paths (`git log <fixed-point>..HEAD --oneline -- <paths>`). Files left out of the count (lockfiles, snapshots, generated files) belong to no part and are not reviewed. Write one report block per part, headed with the part's name, and no merged summary across parts.
-  - **Declined**: stop with one line: "Review stopped: diff over 800 code lines, narrow the fixed point or accept a split." No sub-agent is spawned.
-
-The number lives only here and is not an argument of the skill.
+Run `git rev-parse <fixed-point>` first. When it fails, stop with one line: "Review stopped: `<ref>` is not a valid ref." Then capture the diff command once, `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base), and the commits with `git log <fixed-point>..HEAD --oneline`. When the diff is empty, stop with one line: "Review stopped: no changes between `<ref>` and `HEAD`." No sub-agent starts for nothing.
 
 ### 2. Find the spec
 
 Look for the originating spec, in this order, and stop at the first hit:
 
 1. A path the caller passed (`/flow` passes the feature's `spec.md` and `feature.yaml`).
-2. The current feature's `spec.md` and `feature.yaml` when the repo works with `/flow` (a `.specs/` folder, or the task folder it names).
-3. Issue references in the commit messages (`#123`, `Closes #45`, `!67`), read with `gh issue view` or `glab` when the CLI is available. When it is not, note the reference, mention it in the question below, and go on.
-4. A file under `docs/` or `specs/` whose name contains the branch name without its type prefix (`feature/seed` → `seed`) or the feature id.
+2. The current feature's `spec.md` and `feature.yaml` when the repo works with `/flow` (a `.specs/` folder).
+3. Issue references in the commit messages (`#123`, `Closes #45`), read with `gh issue view` when the CLI is available.
+4. A file under `docs/` or `specs/` whose name matches the branch name or the feature.
 
-A spec file that the change itself adds is still the spec: the Spec sub-agent reads it as the spec and does not review it as code.
-
-Never ask the user to set up an issue tracker. When nothing is found, ask where the spec is. If the user says there is none, skip the Spec axis: the report keeps a `## Spec` section that holds the line "Spec skipped: no spec available".
+When nothing is found, ask the user where the spec is. If they say there is none, the Spec sub-agent is skipped and the report says "no spec available".
 
 ### 3. Find the standards
 
-Search the repo for every file that documents how code is written: `CLAUDE.md` and `AGENTS.md` (root and the folders the diff touches), `CONTRIBUTING.md`, `CODING_STANDARDS.md`, style docs under `docs/`. When `CODING_STANDARDS.md` or `CONTRIBUTING.md` exists it must be on the list. Always add the user's own `~/.claude/CLAUDE.md` when it exists: it carries rules that hold in every repo. Read the files as they stand at `HEAD`; a diff that removes or weakens a documented rule is itself a Standards finding.
+Search the repo for every file that documents how code is written: `CLAUDE.md` and `AGENTS.md` (root and the folders the diff touches), `CONTRIBUTING.md`, `CODING_STANDARDS.md`, style docs under `docs/`. When `CODING_STANDARDS.md` or `CONTRIBUTING.md` exists, it must be on the list.
 
-Then attach the **smell baseline** in `reference/smells.md`, in full. It applies even when a repo documents nothing, with two rules: a documented repo standard overrides the baseline, and every smell is a labelled judgement call, never a hard violation. Skip anything tooling already enforces.
+On top of what the repo documents, the Standards axis always carries the **smell baseline** in `reference/smells.md`: a fixed set of Fowler code smells that applies even when a repo documents nothing. A documented repo standard overrides it, and every smell is a labelled judgement call, never a hard violation.
 
-### 4. Run the repo's own checks
+### 4. Spawn both sub-agents in parallel
 
-Before any sub-agent, run the checks the repo defines, **once**: its tests, linter and type checker. Find the commands in this order: `CLAUDE.md` / `AGENTS.md`, then `Makefile`, `package.json` scripts, `pyproject.toml`, the CI config (`.github/workflows/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`). Never infer a command from a folder name (a `tests/` folder is not a command). Read the commands from the files at `HEAD`; when the diff itself removes or changes them, say so under **Checks**.
+Issue both sub-agent calls together, each with the `model` option set to `sonnet`, and wait for both. Each gets the diff command and the commit list, and answers one line per finding in the format of `reference/findings.md` (pasted into its prompt), with the line number of the file as it stands at `HEAD`.
 
-- Run only commands that read and verify: test, lint, typecheck, format check. Never an install, build-and-deploy, migration, or any command that changes something outside the working tree.
-- Checks must leave the tree as they found it. Take `git status --short` before, run with the usual cache switches (`PYTHONDONTWRITEBYTECODE=1` for Python), and take it again after. Files the checks created are reported under **Checks** as "created by the checks" and left in place; the skill deletes nothing.
-- A failure goes under **Checks** in the report as a fact, with the command and the first failing lines. The axes do not review what a tool already proved: tell each sub-agent which checks failed so it does not repeat them.
-- When no command is found for a kind of check, write "Warning: no <tests|lint|typecheck> command found" under **Checks**; when none is found at all, "Warning: no checks found". Then go on with the review. A warning is always a line that starts with `Warning:`.
+**Standards sub-agent**: the standards files from step 3 (as paths) and `reference/smells.md` pasted in full (the sub-agent has no other access to it). Brief: "Report, per file and hunk, (a) every place the diff violates a documented standard, citing the file and the rule, and (b) any baseline smell you spot, naming it and quoting the hunk. Documented-standard breaches can be hard; baseline smells are always judgement calls, at most `should-fix`, and a documented repo standard overrides the baseline. Skip anything tooling enforces. Source `standards-review`. Under 400 words."
 
-### 5. Run the axes in parallel
+**Spec sub-agent**: the path or fetched contents of the spec. Brief: "Report (a) requirements the spec asked for that are missing or partial, (b) behaviour in the diff that was not asked for, (c) requirements that look implemented but where the implementation looks wrong. Quote the spec line for each finding. Source `spec-review`. Under 400 words."
 
-Decide first whether Security runs (below), then issue the Standards, Spec, Correctness, Tests and, when it runs, Security sub-agent calls together, and wait for all of them to return before step 6. Start each with a fresh context window, on a Sonnet-class model (see **Models** below), and give it **only** the diff command, the commit list and its own sources. The sub-agent runs the diff command itself; repo files are passed as paths for it to read, and the smell baseline is pasted verbatim. No sub-agent sees another's sources or findings.
+If the spec is missing, skip the Spec sub-agent.
 
-**Standards sub-agent**: the standards files from step 3, the smell baseline pasted verbatim, the whole file as `cat` prints it with every smell, never a summary or a shortened list (the sub-agent has no other access to it) and the failed checks from step 4. Brief: "Report every place the diff breaks a documented standard, citing the file and the rule, and any baseline smell you see, naming it and quoting the hunk. Documented-standard breaches can be hard; baseline smells are judgement calls, and a documented repo rule overrides the baseline. Skip anything tooling enforces or the failed checks already show. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `standards-review`. Under 400 words."
+### 5. Aggregate
 
-**Spec sub-agent**: the spec from step 2 and the failed checks from step 4. Brief: "Report (a) requirements the spec asked for that are missing or partial, (b) behaviour in the diff that was not asked for, (c) requirements that look implemented but are wrong. Quote the spec line for each, and judge against the spec text: a failing check is a fact, not the spec. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `spec-review`. Under 400 words."
+Present the two reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings: the two axes are deliberately separate (see _Why two axes_). A skipped Spec axis keeps its heading with "Spec skipped: no spec available".
 
-**Correctness sub-agent**: no spec and no standards, only the diff command, the commit list and the failed checks from step 4. It reads the changed files at `HEAD` with line numbers. Brief: "Judge the code alone, not the spec or any style rule. Report logic errors (off-by-one, wrong operator, inverted condition, wrong return), unhandled edge cases (empty input, zero, negative, `None`, a missing key), broken error handling and state that can go wrong. For each, say the input that triggers it. Skip what the failed checks already show. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `correctness-review`. Under 400 words."
+End with one summary line per axis: how many findings, and the worst one within that axis. Never pick a single winner across axes.
 
-**Tests sub-agent**: the diff command, the commit list, the test files the diff touches or that sit beside the changed code (as paths) and the failed checks from step 4. Brief: "Report (a) behaviour the diff adds or changes that no test exercises, including error branches, and (b) tests that would still pass if the code were wrong: no assertion, an assertion on a mock or on the input itself, a test that never reaches the changed line. Name the missing case for each. A test the failed checks already show red is a fact, not a finding. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `tests-review`. Under 400 words."
+### 6. Record the findings (only with `--feature`)
 
-**Security trigger.** The skill decides this itself, with no sub-agent, by scanning the diff's changed paths and added lines (`git diff <fixed-point>...HEAD`). Security runs when any of these shows up:
+When the caller passed `--feature <folder>` (with the `--root` and `--specs` of its `flow.py` calls), the review is kept in that feature's `review.yaml`, which `flow.py` owns: it creates the file, numbers each finding `R-n` and checks it. Never write `review.yaml` by hand.
 
-- **external input**: reading request or form data, CLI arguments, environment variables, files or stdin handed in by a user, deserialising (`pickle`, `yaml.load`, `eval`);
-- **auth**: login, sessions, tokens, permissions, password handling;
-- **secrets**: keys, tokens, credentials, `.env` files, or a path or name that suggests them;
-- **shell**: `os.system`, `subprocess`, backticks, `exec`, `child_process`, a shell script;
-- **network**: HTTP clients or servers, sockets, URLs built from variables, a webhook or CORS setting.
+- `flow.py` is the sibling skill's script, `<skill-dir>/../flow/scripts/flow.py`. When it is not there, record nothing and add one line to the report: "Not recorded: flow.py not found."
+- For each finding of both axes, in report order, run:
 
-A diff that touches only docs, comments, tests or formatting triggers none. When unsure, run it. Say in the report which signal fired, or why none did.
+  ```bash
+  python <flow.py> --root <root> --specs <specs> finding <feature> --text "<what is wrong>" --source <source> \
+    --severity <severity> --confidence <confidence> --file <file> [--line <line>] --hunk "<hunk>" --fix "<fix>"
+  ```
 
-**Security sub-agent** (only when triggered): the diff command, the commit list and the failed checks from step 4, no spec and no standards. Brief: "Look only for security problems the diff introduces: command or SQL injection, unsanitised input reaching a shell, path or query, secrets in code or logs, missing or weakened auth checks, unsafe deserialisation, unvalidated URLs. Name the input and where it flows for each. This is a quick pass, not an audit. Read each file with line numbers before citing a line. One line per finding in the format of `reference/findings.md`, source `security-review`. Under 400 words."
+  Each value comes from the finding's line as the sub-agent wrote it (`reference/findings.md`); `--line` is left out when the file is `-`. Give no `--action`: the outcome is the caller's to decide.
+- When both axes ran and neither has a finding, run `finding <feature> --none` once instead. When the Spec axis was skipped, record only the Standards findings (no `--none`), and say in the report that the spec part was not reviewed.
+- When a call exits non-zero, stop recording, and report the command, its output and the findings left unrecorded under the summary: `review.yaml` then holds only the findings before it.
 
-When there is no spec, skip the Spec sub-agent.
+End the report with the ids `flow.py` printed (`R-1`..`R-n`, or "clean review recorded").
 
-### 6. Verify the serious findings
+Without `--feature`, nothing is recorded and no file is edited.
 
-For each axis (Standards, Spec, Correctness, Tests, Security) that returned a `blocker` or `should-fix`, start **one** new sub-agent with a fresh context window and give it only the `blocker` and `should-fix` findings of that axis, the diff command, the same sources as its axis (for Standards, the smell baseline pasted verbatim again, as in step 5; for Correctness, Tests and Security, the paths they were given) and the failed checks from step 4. Brief: "Try to refute each finding against the code: read the surrounding code and the spec or rule it cites, and look for a guard, a caller or a requirement that makes it wrong. Check every cited `file:line` against the file and correct it when it is off. Answer per finding: `kept`, `downgraded to <severity>` or `dropped`, with one sentence of evidence."
+## Why two axes
 
-- `kept` and `downgraded` findings go into the report with their final severity.
-- `dropped` ones are not hidden: they go under **Dropped by verify**, with the finding and the refuter's reason, so the user can overrule.
-- `nit` findings skip this step.
-- An answer that is none of the three verdicts counts as `kept`.
-
-### 7. Check docs and the ficha
-
-After the verify pass, the skill does this check itself: **no sub-agent**. List which of these exist at `HEAD`: `README.md`, a `docs/` folder, `CLAUDE.md` and `AGENTS.md` (root and the folders the diff touches) and `project.yaml` at the repo root (the project's ficha). For each that exists and that the diff did **not** touch, `grep` it for the names the diff adds, renames or removes (functions, commands, flags, files, features) and for what the commit list says changed. A file that mentions something the diff changed, or that should list a feature the diff adds (a README feature list, a `project.yaml` description), is reported as likely stale, with the file, the line it should change (or `-` when it lacks the entry) and the name that triggered it.
-
-These are hints, not findings: they carry no severity, have no `Source` and skip the verify pass. For each of `README.md`, `docs/` and `project.yaml` that does not exist, write "Absent: <name>" and go on. When nothing looks stale, write "Nothing looks stale".
-
-### 8. Report
-
-Before writing, check every cited `file:line`, nits included, against the file with `cat -n` and correct the ones that are off.
-
-Write one section per axis, with the findings in the format of `reference/findings.md`. The order is `## Checks` (what step 4 found: failures, files the checks created, warnings), `## Standards`, `## Spec`, `## Correctness`, `## Tests`, `## Security`, `## Docs and ficha` (what step 7 found), `## Dropped by verify` (write "None" when nothing was dropped), then the summary lines. A skipped axis keeps its heading and one line: `Spec skipped: no spec available`, or `Security skipped: <why>` naming the signal that did not fire. Do **not** merge or rerank findings across axes: the separation exists to prevent that, so a defect both axes raise stays in both.
-
-The summary has one line per axis that ran: how many findings, and the worst one in that axis (the first of the highest severity); a skipped axis gets "skipped", **Docs and ficha** gets the count of files that look stale, and **Checks** gets a line when something failed or warned. Never pick a single winner across axes.
-
-## Models
-
-Every sub-agent this skill starts, the axes of step 5 and the refuters of step 6, runs on Sonnet 5.5 or a similar mid-size model. Set the `model` option of each Agent call to `sonnet`. Never use a heavier model: a review starts up to ten sub-agents, so the cost multiplies. This holds even when the calling session runs a heavier model.
-
-## Why separate axes
-
-A change can pass one axis and fail another:
+A change can pass one axis and fail the other:
 
 - Code that follows every standard but implements the wrong thing → **Standards pass, Spec fail.**
 - Code that does exactly what the spec asked but breaks the project's conventions → **Spec pass, Standards fail.**

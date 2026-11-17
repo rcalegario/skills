@@ -1,6 +1,6 @@
 # Findings
 
-Every sub-agent reports findings in this shape, so the report is uniform and a caller (`/flow`) can record each one without rewriting it.
+Every sub-agent reports findings in this shape, so the report is uniform and step 6 can record each one through `flow.py finding` without rewriting it.
 
 ## One finding, one line
 
@@ -36,11 +36,6 @@ The `Source` is the value `flow.py finding --source` accepts:
 |---|---|
 | Spec | `spec-review` |
 | Standards | `standards-review` |
-| Correctness | `correctness-review` |
-| Tests | `tests-review` |
-| Security | `security-review` |
-
-Docs and ficha reports hints, not findings: it has no source and `flow.py finding` does not record it.
 
 ## Under each axis
 

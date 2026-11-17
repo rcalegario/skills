@@ -39,7 +39,7 @@ What each skill is built from. Edit `skills.yaml`, then run `python scripts/skil
 
 ### code-review
 
-- derived from [mattpocock/skills · code-review](https://github.com/mattpocock/skills/tree/5863806dd4e1/skills/engineering/code-review) (MIT, `5863806dd4e1`) - Two parallel axes (Standards with a Fowler smell baseline, Spec) reported apart, never reranked
+- derived from [mattpocock/skills · code-review](https://github.com/mattpocock/skills/tree/5863806dd4e1/skills/engineering/code-review) (MIT, `5863806dd4e1`) - The whole review process, two parallel axes (Standards with a Fowler smell baseline, Spec) reported apart and never reranked; the review file written through flow.py is our addition
 
 ### spec-lite
 
