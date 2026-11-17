@@ -371,8 +371,8 @@ def test_finish_refuses_until_checks_pass_and_review_recorded(repo, capsys):
     assert "AC2" in capsys.readouterr().out
     assert run(repo, "set", "demo", "AC2", "pass") == 0
     assert run(repo, "finish", "demo") == 1
-    assert "review.findings" in capsys.readouterr().out
-    feature(repo).write_text(feature(repo).read_text() + "review:\n  findings: []\n")
+    assert "review.yaml" in capsys.readouterr().out
+    review_file(repo).write_text("findings: []\n")
     assert run(repo, "finish", "demo") == 0
     assert data(repo)["status"] == "done"
     assert run(repo, "check", "demo") == 0
@@ -630,21 +630,115 @@ def test_roadmap_approve_refuses_an_invalid_roadmap(repo):
 # ---------------------------------------------------------------- finding
 
 def findings(root):
-    return (data(root).get("review") or {}).get("findings")
+    return review(root)["findings"] if review_file(root).exists() else None
 
 
-def test_finding_creates_the_review_block_and_appends(repo):
-    assert run(repo, "finding", "demo", "--text", "AC2 test misses a quote", "--action", "fix", "--task", "T3", "--source", "spec-review") == 0
-    assert run(repo, "finding", "demo", "--text", "Rename writer", "--action", "wontfix", "--reason", "Matches naming", "--source", "standards-review") == 0
+def test_finding_creates_review_yaml_with_stamps(repo):
+    assert run(repo, "finding", "demo", "--text", "AC2 test misses a quote", "--source", "spec-review") == 0
+    doc = review(repo)
+    assert str(doc["base"]) == "abc1234"
+    assert str(doc["head"]) == head(repo)
+    assert doc["created"] == datetime.date.today()
+    assert doc["findings"] == [{"id": "R-1", "text": "AC2 test misses a quote", "source": "spec-review"}]
+    assert run(repo, "check", "demo") == 0
+
+
+def test_finding_appends_next_id_with_details(repo):
+    assert run(repo, "finding", "demo", "--text", "a: b", "--source", "user") == 0
+    assert run(repo, "finding", "demo", "--text", "Off by one", "--source", "correctness-review",
+               "--severity", "should-fix", "--confidence", "high", "--file", "src/x.py", "--line", "12",
+               "--hunk", "for i in range(n + 1):", "--fix", "Use range(n)") == 0
+    assert run(repo, "finding", "demo", "--text", "Rename", "--source", "standards-review",
+               "--action", "fix", "--task", "T2") == 0
     assert findings(repo) == [
-        {"text": "AC2 test misses a quote", "action": "fix", "task": "T3", "source": "spec-review"},
-        {"text": "Rename writer", "action": "wontfix", "reason": "Matches naming", "source": "standards-review"}]
-    assert "status: approved   # keep this comment" in feature(repo).read_text()
+        {"id": "R-1", "text": "a: b", "source": "user"},
+        {"id": "R-2", "text": "Off by one", "source": "correctness-review", "severity": "should-fix",
+         "confidence": "high", "file": "src/x.py", "line": 12, "hunk": "for i in range(n + 1):",
+         "fix": "Use range(n)"},
+        {"id": "R-3", "text": "Rename", "source": "standards-review", "action": "fix", "task": "T2"}]
+    assert run(repo, "check", "demo") == 0
 
 
-def test_finding_none_records_a_clean_review(repo):
+@pytest.mark.parametrize("extra", [
+    ["--source", "user", "--action", "fix"],
+    ["--source", "user", "--action", "fix", "--task", "T9"],
+    ["--source", "user", "--action", "wontfix"],
+    ["--source", "pr-comment"],
+    ["--source", "user", "--comment-id", "7"],
+    ["--source", "user", "--line", "0"],
+    [],
+])
+def test_new_finding_rejects_bad_input_unchanged(repo, extra):
+    assert run(repo, "finding", "demo", "--text", "first", "--source", "user") == 0
+    before = review_file(repo).read_text()
+    assert run(repo, "finding", "demo", "--text", "x", *extra) == 1
+    assert review_file(repo).read_text() == before
+
+
+@pytest.mark.parametrize("bad", [["--severity", "huge"], ["--confidence", "sure"], ["--source", "gossip"]])
+def test_new_finding_rejects_unknown_choices(repo, bad):
+    with pytest.raises(SystemExit):
+        run(repo, "finding", "demo", "--text", "x", "--source", "user", *bad)
+    assert findings(repo) is None
+
+
+def test_finding_never_writes_feature_yaml(repo):
+    before = feature(repo).read_text()
+    assert run(repo, "finding", "demo", "--text", "x", "--source", "user") == 0
+    assert run(repo, "finding", "demo", "--text", "y", "--source", "user", "--action", "wontfix", "--reason", "r") == 0
+    assert feature(repo).read_text() == before
+
+
+def test_finding_refuses_a_legacy_block(repo, capsys):
+    feature(repo).write_text(FEATURE + "review:\n  findings: []\n")
+    capsys.readouterr()
+    assert run(repo, "finding", "demo", "--text", "x", "--source", "user") == 1
+    assert "review.yaml" in capsys.readouterr().out
+    assert not review_file(repo).exists()
+
+
+def test_finding_sets_and_changes_the_outcome(repo, capsys):
+    assert run(repo, "finding", "demo", "--text", "a", "--source", "spec-review", "--severity", "nit") == 0
+    assert run(repo, "finding", "demo", "--text", "b", "--source", "user") == 0
+    capsys.readouterr()
+    assert run(repo, "finding", "demo", "R-1", "--action", "fix", "--task", "T2") == 0
+    out = capsys.readouterr().out
+    assert "R-1" in out and "no action -> fix T2" in out
+    assert findings(repo)[0] == {"id": "R-1", "text": "a", "source": "spec-review", "severity": "nit",
+                                 "action": "fix", "task": "T2"}
+    assert run(repo, "finding", "demo", "R-1", "--action", "wontfix", "--reason", "too small") == 0
+    assert "fix T2 -> wontfix" in capsys.readouterr().out
+    assert findings(repo) == [
+        {"id": "R-1", "text": "a", "source": "spec-review", "severity": "nit", "action": "wontfix", "reason": "too small"},
+        {"id": "R-2", "text": "b", "source": "user"}]
+    assert run(repo, "check", "demo") == 0
+
+
+@pytest.mark.parametrize("args", [
+    ["R-9", "--action", "wontfix", "--reason", "r"],
+    ["R-1", "--action", "fix", "--task", "T9"],
+    ["R-1", "--action", "fix"],
+    ["R-1", "--action", "wontfix"],
+    ["R-1"],
+    ["R-1", "--action", "wontfix", "--reason", "r", "--text", "new text"],
+    ["R-1", "--none"],
+])
+def test_finding_outcome_rejects_unknown_id_or_task(repo, args):
+    assert run(repo, "finding", "demo", "--text", "a", "--source", "user") == 0
+    before = review_file(repo).read_text()
+    assert run(repo, "finding", "demo", *args) == 1
+    assert review_file(repo).read_text() == before
+
+
+def test_finding_outcome_needs_review_yaml(repo):
+    assert run(repo, "finding", "demo", "R-1", "--action", "wontfix", "--reason", "r") == 1
+    assert not review_file(repo).exists()
+
+
+def test_finding_none_writes_a_clean_review_yaml(repo):
     assert run(repo, "finding", "demo", "--none") == 0
     assert findings(repo) == []
+    assert run(repo, "check", "demo") == 0
 
 
 def test_finding_none_is_refused_when_findings_exist(repo):
@@ -671,8 +765,8 @@ def wontfix(repo, *extra):
 
 def test_finding_records_the_pr_comment_and_its_id(repo):
     assert wontfix(repo, "--source", "pr-comment", "--comment-id", "2201") == 0
-    assert findings(repo) == [{"text": "x", "action": "wontfix", "reason": "y",
-                               "source": "pr-comment", "comment_id": 2201}]
+    assert findings(repo) == [{"id": "R-1", "text": "x", "source": "pr-comment", "comment_id": 2201,
+                               "action": "wontfix", "reason": "y"}]
 
 
 def test_finding_needs_a_known_source(repo):
@@ -685,7 +779,7 @@ def test_finding_needs_a_known_source(repo):
 @pytest.mark.parametrize("source", ["correctness-review", "tests-review", "security-review"])
 def test_finding_accepts_each_review_source(repo, source):
     assert wontfix(repo, "--source", source) == 0
-    assert findings(repo) == [{"text": "x", "action": "wontfix", "reason": "y", "source": source}]
+    assert findings(repo) == [{"id": "R-1", "text": "x", "source": source, "action": "wontfix", "reason": "y"}]
 
 
 def test_finding_pr_comment_needs_its_id_and_only_it(repo):
@@ -868,3 +962,97 @@ def test_milestone_is_done_when_all_its_features_are(repo):
     assert run(repo, "roadmap") == 0
     road = yaml.safe_load((repo / ".specs" / "roadmap.yaml").read_text())
     assert road["milestones"][0]["status"] == "building"      # F1.2 still planned
+
+
+# ---------------------------------------------------------------- review.yaml
+
+def review_file(root):
+    return root / ".specs" / "features" / "demo" / "review.yaml"
+
+
+def review(root):
+    return yaml.safe_load(review_file(root).read_text())
+
+
+def finish_ready(root):
+    build_all(root)
+    assert run(root, "review", "demo") == 0
+    assert run(root, "set", "demo", "AC1", "pass") == 0
+    assert run(root, "set", "demo", "AC2", "pass") == 0
+
+
+def test_finish_needs_review_yaml_with_every_outcome(repo, capsys):
+    finish_ready(repo)
+    capsys.readouterr()
+    assert run(repo, "finish", "demo") == 1
+    assert "needs review.yaml" in capsys.readouterr().out
+    review_file(repo).write_text("findings:\n  - {id: R-1, text: a, source: user}\n"
+                                 "  - {id: R-2, text: b, source: user, action: wontfix, reason: r}\n")
+    assert run(repo, "finish", "demo") == 1
+    out = capsys.readouterr().out
+    assert "R-1 has no action" in out and "R-2" not in out
+    review_file(repo).write_text("findings:\n  - {id: R-1, text: a, source: user, action: wontfix, reason: r}\n")
+    assert run(repo, "finish", "demo") == 0
+    assert data(repo)["status"] == "done"
+
+
+def test_check_reports_review_yaml_errors(repo, capsys):
+    review_file(repo).write_text(
+        "findings:\n"
+        "  - {id: R-1, text: a, source: gossip}\n"
+        "  - {id: R-1, text: b, source: user, severity: huge, confidence: sure}\n"
+        "  - {id: X9, text: c, source: user, action: fix, task: T9}\n"
+        "  - {id: R-4, text: d, source: user, action: wontfix}\n"
+        "  - {id: R-5, text: e, source: pr-comment}\n"
+        "  - {id: R-6, text: f, source: pr-comment, comment_id: 7}\n"
+        "  - {id: R-7, text: g, source: pr-comment, comment_id: 7}\n"
+        "  - {id: R-8, text: h, source: user, action: maybe}\n")
+    code, out = check_output(repo, capsys)
+    assert code == 1
+    for expected in ["R-1 source must be one of", "id R-1 is duplicated", "severity must be one of",
+                     "confidence must be one of", "id X9 must be R-<n>", "fix without an existing 'task'",
+                     "R-4 is a wontfix without a 'reason'", "R-5 is a pr-comment without a 'comment_id'",
+                     "comment_id 7 is recorded twice", "R-8 action must be one of"]:
+        assert expected in out, (expected, out)
+
+
+@pytest.mark.parametrize("body", ["findings: oops\n", "base: abc1234\n"])
+def test_check_rejects_review_yaml_without_a_findings_list(repo, capsys, body):
+    review_file(repo).write_text(body)
+    code, out = check_output(repo, capsys)
+    assert code == 1 and "findings must be a list" in out
+    capsys.readouterr()
+    assert run(repo, "finding", "demo", "--none") == 1
+    assert run(repo, "finding", "demo", "--text", "x", "--source", "user") == 1
+    assert review_file(repo).read_text() == body
+
+
+def test_check_reports_the_id_of_a_finding_without_text(repo, capsys):
+    review_file(repo).write_text("findings:\n  - {id: R-1, text: a, source: user}\n  - {id: R-1, source: user}\n")
+    code, out = check_output(repo, capsys)
+    assert code == 1 and "id R-1 is duplicated" in out and "needs 'text'" in out
+
+
+def test_check_accepts_a_review_yaml_with_open_findings(repo, capsys):
+    review_file(repo).write_text("base: abc1234\nhead: abc1234\ncreated: 2026-11-17\nfindings:\n"
+                                 "  - {id: R-1, text: a, source: spec-review, severity: nit, confidence: low}\n")
+    code, out = check_output(repo, capsys)
+    assert code == 0, out
+
+
+def test_legacy_review_block_is_read_with_a_warning(repo, capsys):
+    legacy = FEATURE + "review:\n  findings:\n    - {text: a, action: wontfix, reason: r, source: user}\n"
+    code, out = check_output(repo, capsys, legacy)
+    assert code == 0 and "legacy" in out
+    assert run(repo, "status", "demo") == 0
+    out = capsys.readouterr().out
+    assert "Review findings: 1" in out and "legacy" in out
+    review_file(repo).write_text("findings: []\n")
+    code, out = check_output(repo, capsys)
+    assert code == 1 and "both" in out
+
+
+def test_finish_reads_a_legacy_review_block(repo):
+    finish_ready(repo)
+    feature(repo).write_text(feature(repo).read_text() + "review:\n  findings: []\n")
+    assert run(repo, "finish", "demo") == 0

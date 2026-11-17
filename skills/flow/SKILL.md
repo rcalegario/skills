@@ -23,10 +23,12 @@ Every status change, the roadmap approval and the feature skeleton go through th
 | Starting a task | `set <feature> T<n> doing` |
 | The task's commit is made | `set <feature> T<n> verifying` (records `HEAD`; `--commit <sha>` on resume) |
 | A criterion's checks ran | `set <feature> AC<n> pass\|fail`: a task turns `done` when every check of the criteria it covers passes, and goes back to `verifying` when one fails |
-| A review finding (or a clean review) | `finding <feature> --text T --source S --action fix --task T<n>`, `--action wontfix --reason R`, or `--none`. `S` is `spec-review`, `standards-review`, `correctness-review`, `tests-review`, `security-review`, `pr-comment` (add `--comment-id N`, the GitHub comment id) or `user` |
+| A review finding | `finding <feature> --text T --source S [--severity --confidence --file --line --hunk --fix]`: appended to `review.yaml` as the next `R-n`, with no outcome yet. Add `--action fix --task T<n>` or `--action wontfix --reason R` when the outcome is already known. `S` is `spec-review`, `standards-review`, `correctness-review`, `tests-review`, `security-review`, `pr-comment` (add `--comment-id N`, the GitHub comment id) or `user` |
+| The outcome of a finding | `finding <feature> R-n --action fix --task T<n>` or `--action wontfix --reason R` (replaces an earlier outcome) |
+| A clean review | `finding <feature> --none` (`findings: []`) |
 | The feature's PR is open | `pr <feature> --url U` |
 | Every task committed (`verifying` or `done`) | `review <feature>` |
-| Every check `pass` and the review recorded | `finish <feature>` |
+| Every check `pass` and every finding in `review.yaml` has an outcome | `finish <feature>` |
 | Resuming, or "where are we" | `roadmap`, `status <feature>` |
 
 `approve` and `roadmap --approve` record the user's approval: run them only in the turn the user gives it.
@@ -191,21 +193,37 @@ deferred:                      # ideas that came up and are out of this feature
   - Choose the delimiter.
 
 pr: https://github.com/acme/app/pull/42   # written by `pr`, once the PR is open
-
-review:                        # filled at CLOSE
-  findings:
-    - text: AC2 test does not cover a quote inside a value
-      action: fix              # fix | wontfix
-      task: T3                 # fix → the task that fixes it
-      source: spec-review      # spec-review | standards-review | correctness-review | tests-review | security-review | pr-comment | user
-    - text: Rename writer module
-      action: wontfix
-      reason: Matches the existing naming.
-      source: pr-comment
-      comment_id: 2201         # pr-comment → the GitHub comment id; one finding per comment
 ```
 
-A finding without `source` (older features) is accepted with a warning.
+### review.yaml
+
+The review lives beside `feature.yaml`, in `review.yaml`, filled at CLOSE and written only by `flow.py finding`, which creates the file, stamps it and numbers each finding:
+
+```yaml
+base: abc1234                  # the feature's base, stamped when the file is created
+head: def5678                  # HEAD when the file is created
+created: 2026-11-12
+findings:                      # [] for a clean review (`finding --none`)
+  - id: R-1                    # assigned by the script
+    text: "AC2 test does not cover a quote inside a value"
+    source: spec-review        # spec-review | standards-review | correctness-review | tests-review | security-review | pr-comment | user
+    severity: should-fix       # optional: blocker | should-fix | nit
+    confidence: high           # optional: high | medium | low
+    file: "src/export.test.ts" # optional, the file at HEAD ("-" when nothing points at a line)
+    line: 41                   # optional
+    hunk: "expect(csv).toContain(',')"   # optional, the quoted code or spec line
+    fix: "Add a value with a quote"      # optional, one sentence
+    action: fix                # absent until decided: fix | wontfix
+    task: T3                   # fix → the task that fixes it
+  - id: R-2
+    text: "Rename writer module"
+    source: pr-comment
+    comment_id: 2201           # pr-comment → the GitHub comment id; one finding per comment
+    action: wontfix
+    reason: "Matches the existing naming."
+```
+
+A feature closed before `review.yaml` keeps its `review:` block in `feature.yaml`: `check`, `status` and `finish` still read it and warn that it is legacy; `finding` refuses such a feature until the block moves into `review.yaml`, and `check` fails when both exist.
 
 `spec.md` holds the rest: Problem, Assumptions, Out of scope and Notes (decisions taken along the way; for M, the design in a few lines). `check` refuses an approved M or L feature whose `spec.md` is missing or still has a `TODO`.
 
@@ -242,10 +260,10 @@ M and L:
    - **Spec**: criteria missing or partial, behaviour nobody asked for, criteria that look implemented but wrong. The spec is `spec.md` plus `feature.yaml`.
    - **Standards**: breaches of the project's documented standards (its `CLAUDE.md` / `AGENTS.md` files and coding-standards docs).
 
-   Invoke the `code-review` skill with `base` and the paths to `spec.md` and `feature.yaml` when it is available; otherwise dispatch two sub-agents in parallel, one per axis, each given the diff command and its sources, each reporting in under 400 words with a quote or `file:line` per finding.
-4. Record every finding with `flow.py finding <feature> --text T --source S --action fix --task T<n>` or `--action wontfix --reason R`, and a clean review with `finding <feature> --none`. Comments left on the PR are findings too: read them (`gh api repos/<owner>/<repo>/pulls/<n>/comments`, and `issues/<n>/comments` for general ones), and record each with `--source pr-comment --comment-id <id>`. A `fix` adds a task (same BUILD loop); a `wontfix` carries a `reason` the user agreed to (**question** format). One round: after the fixes, run the suite again, and there is no second review.
+   Invoke the `code-review` skill with `base`, the paths to `spec.md` and `feature.yaml`, and `--feature <feature> --root <root> --specs <specs>` (the same values as your `flow.py` calls) when it is available: it records every finding in `review.yaml` itself, or a clean review. Otherwise dispatch two sub-agents in parallel, one per axis, each given the diff command and its sources, each reporting in under 400 words with a quote or `file:line` per finding, and record each finding yourself with `flow.py finding <feature> --text T --source S ...` (its severity, file, line, hunk and fix when the review gave them), or `finding <feature> --none` when both axes are clean.
+4. Comments left on the PR are findings too: read them (`gh api repos/<owner>/<repo>/pulls/<n>/comments`, and `issues/<n>/comments` for general ones), and record each with `--source pr-comment --comment-id <id>`. Then give each finding its outcome with `finding <feature> R-n --action fix --task T<n>` or `--action wontfix --reason R`: a `fix` adds a task first (same BUILD loop); a `wontfix` carries a `reason` the user agreed to (**question** format). One round: after the fixes, run the suite again, and there is no second review.
 5. **Manual checks.** Present the `manual` checks in the **checklist** format, and wait. Record each one with `set <feature> AC<n> pass|fail` as the user reports. A `fail` is fixed (a task, same loop) and checked again.
-6. `finish <feature>`: it refuses while a task is not `done`, a check is not `pass`, or the review is missing.
+6. `finish <feature>`: it refuses while a task is not `done`, a check is not `pass`, `review.yaml` is missing, or a finding has no outcome.
 
 Done when: `finish` exits 0. Report in a few lines: the criteria proved by tests, the ones the user confirmed, anything deferred. A lesson that will matter in later features is proposed to the user as a line in the right `CLAUDE.md` / `AGENTS.md`.
 

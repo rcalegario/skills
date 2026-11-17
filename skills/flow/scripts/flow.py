@@ -9,8 +9,12 @@ Commands:
                                             start a task, or record its commit (HEAD by default): it then waits for its checks
   set     <feature> AC<n> pass|fail         record the result of a criterion's checks; a task is done once every
                                             check of the criteria it covers passes (never set by hand)
-  finding <feature> --text T --source S [--comment-id N] --action fix --task T3 | --action wontfix --reason R | --none
-                                            record a review finding (or a clean review)
+  finding <feature> --text T --source S [--severity --confidence --file --line --hunk --fix --comment-id N]
+                  [--action fix --task T3 | --action wontfix --reason R]
+                                            record a review finding in review.yaml with the next R-n id
+  finding <feature> R-n --action fix --task T3 | --action wontfix --reason R
+                                            set or change the outcome of finding R-n
+  finding <feature> --none                  record a clean review (findings: [])
   pr      <feature> --url U                 record the pull request that delivers the feature
   review  <feature>                         every task verifying or done: building -> review
   finish  <feature>                         every check pass and review recorded: review -> done
@@ -46,6 +50,8 @@ TASK_STATUSES = ("todo", "doing", "verifying", "done")
 STARTED = ("verifying", "done")        # a task whose commit exists
 CHECK_STATUSES = ("pending", "pass", "fail")
 ACTIONS = ("fix", "wontfix")
+SEVERITIES = ("blocker", "should-fix", "nit")
+CONFIDENCES = ("high", "medium", "low")
 SOURCES = ("spec-review", "standards-review", "correctness-review", "tests-review", "security-review",
            "pr-comment", "user")
 MAX_TASKS = 8
@@ -103,6 +109,24 @@ def commit_exists(root, sha):
 
 def as_list(value):
     return value if isinstance(value, list) else []
+
+
+def review_path(folder):
+    return os.path.join(folder, "review.yaml")
+
+
+def load_review(data, folder):
+    """The review findings and where they live: (list or None, 'file' | 'legacy' | None).
+
+    review.yaml beside feature.yaml wins; a `review:` block inside feature.yaml is the legacy place."""
+    if folder and os.path.isfile(review_path(folder)):
+        _, doc = load(review_path(folder))
+        findings = doc.get("findings")
+        return (findings if isinstance(findings, list) else None), "file"
+    legacy = data.get("review")
+    if isinstance(legacy, dict) and isinstance(legacy.get("findings"), list):
+        return legacy["findings"], "legacy"
+    return None, None
 
 
 # ---------------------------------------------------------------- check
@@ -233,39 +257,21 @@ def validate(data, root, specs=None, folder=None):
     if any(str(c.get("test") or "").strip() for c in checks) and not str(data.get("test") or "").strip():
         err("'test' (the suite command) is required when a check names a test")
 
-    review = data.get("review")
-    findings = as_list(review.get("findings")) if isinstance(review, dict) else []
-    seen_comments = set()
-    for i, finding in enumerate(findings):
-        if not isinstance(finding, dict) or not str(finding.get("text") or "").strip():
-            err("review.findings[%d] needs 'text'" % i)
-            continue
-        action = finding.get("action")
-        if action not in ACTIONS:
-            err("review.findings[%d] action must be one of %s" % (i, ", ".join(ACTIONS)))
-        elif action == "fix" and finding.get("task") not in by_id:
-            err("review.findings[%d] is a fix without an existing 'task'" % i)
-        elif action == "wontfix" and not str(finding.get("reason") or "").strip():
-            err("review.findings[%d] is a wontfix without a 'reason'" % i)
-        source = finding.get("source")
-        if source is None:
-            warn("review.findings[%d] has no 'source' (%s)" % (i, ", ".join(SOURCES)))
-        elif source not in SOURCES:
-            err("review.findings[%d] source must be one of %s" % (i, ", ".join(SOURCES)))
-        elif source == "pr-comment" and not finding.get("comment_id"):
-            err("review.findings[%d] is a pr-comment without a 'comment_id'" % i)
-        cid = finding.get("comment_id")
-        if cid is not None:
-            if cid in seen_comments:
-                err("comment_id %s is recorded twice" % cid)
-            seen_comments.add(cid)
+    findings, where = load_review(data, folder)
+    if where == "file" and isinstance(data.get("review"), dict):
+        err("the review is in both feature.yaml and review.yaml: move the feature.yaml block into review.yaml")
+    elif where == "legacy":
+        warn("the review block in feature.yaml is legacy: new reviews go to review.yaml beside it")
+    if where == "file" and findings is None:
+        err("review.yaml: findings must be a list ([] for a clean review)")
+    validate_findings(findings or [], by_id, where == "legacy", err, warn)
 
     pr = data.get("pr")
     if pr is not None and not re.match(r"^https?://\S+$", str(pr)):
         err("'pr' must be a URL")
 
     if status == "done":
-        err_list = finish_blockers(data)
+        err_list = finish_blockers(data, folder)
         errors.extend("status 'done' but %s" % e for e in err_list)
 
     link = data.get("roadmap")
@@ -279,7 +285,51 @@ def validate(data, root, specs=None, folder=None):
     return errors, warnings
 
 
-def finish_blockers(data):
+def validate_findings(findings, by_id, legacy, err, warn):
+    """Check review findings: review.yaml ones carry an R-n id and may wait for an action; legacy ones need it."""
+    seen_ids, seen_comments = set(), set()
+    for i, finding in enumerate(findings):
+        name = "review.findings[%d]" % i
+        if not isinstance(finding, dict):
+            err("%s needs 'text'" % name)
+            continue
+        if not legacy:
+            fid = str(finding.get("id") or "")
+            if not re.match(r"^R-[1-9][0-9]*$", fid):
+                err("review.yaml: id %s must be R-<n>" % (fid or "(missing)"))
+            elif fid in seen_ids:
+                err("review.yaml: id %s is duplicated" % fid)
+            seen_ids.add(fid)
+            name = "review.yaml %s" % (fid or name)
+        if not str(finding.get("text") or "").strip():
+            err("%s needs 'text'" % name)
+            continue
+        action = finding.get("action")
+        if action is not None or legacy:            # a review.yaml finding may still wait for its outcome
+            if action not in ACTIONS:
+                err("%s action must be one of %s" % (name, ", ".join(ACTIONS)))
+            elif action == "fix" and finding.get("task") not in by_id:
+                err("%s is a fix without an existing 'task'" % name)
+            elif action == "wontfix" and not str(finding.get("reason") or "").strip():
+                err("%s is a wontfix without a 'reason'" % name)
+        source = finding.get("source")
+        if source is None:
+            (warn if legacy else err)("%s has no 'source' (%s)" % (name, ", ".join(SOURCES)))
+        elif source not in SOURCES:
+            err("%s source must be one of %s" % (name, ", ".join(SOURCES)))
+        elif source == "pr-comment" and not finding.get("comment_id"):
+            err("%s is a pr-comment without a 'comment_id'" % name)
+        for key, allowed in (("severity", SEVERITIES), ("confidence", CONFIDENCES)):
+            if finding.get(key) is not None and finding.get(key) not in allowed:
+                err("%s %s must be one of %s" % (name, key, ", ".join(allowed)))
+        cid = finding.get("comment_id")
+        if cid is not None:
+            if cid in seen_comments:
+                err("comment_id %s is recorded twice" % cid)
+            seen_comments.add(cid)
+
+
+def finish_blockers(data, folder=None):
     """What keeps a feature from being done."""
     out = []
     tasks = [t for t in as_list(data.get("tasks")) if isinstance(t, dict)]
@@ -289,9 +339,14 @@ def finish_blockers(data):
     for c in as_list(data.get("checks")):
         if isinstance(c, dict) and c.get("status") != "pass":
             out.append("check %s is %s" % (c.get("ac"), c.get("status")))
-    review = data.get("review")
-    if data.get("size") in ("M", "L") and not (isinstance(review, dict) and isinstance(review.get("findings"), list)):
-        out.append("size %s needs review.findings (an empty list when the review is clean)" % data.get("size"))
+    findings, where = load_review(data, folder)
+    if data.get("size") in ("M", "L") and findings is None:
+        out.append("size %s needs review.yaml (record the review with `finding`, or `finding --none` when it is clean)"
+                   % data.get("size"))
+    if where == "file":
+        for f in findings:
+            if isinstance(f, dict) and f.get("action") is None:
+                out.append("review finding %s has no action" % f.get("id"))
     return out
 
 
@@ -351,10 +406,11 @@ def cmd_status(path, root, specs):
     checks = [c for c in as_list(data.get("checks")) if isinstance(c, dict)]
     if checks:
         print("Checks: %d/%d pass" % (sum(1 for c in checks if c.get("status") == "pass"), len(checks)))
-    review = data.get("review")
-    findings = as_list(review.get("findings")) if isinstance(review, dict) else []
+    findings, where = load_review(data, os.path.dirname(path))
     if findings:
-        print("Review findings: %d" % len(findings))
+        waiting = sum(1 for f in findings if isinstance(f, dict) and f.get("action") is None and where == "file")
+        print("Review findings: %d%s%s" % (len(findings), " (%d without action)" % waiting if waiting else "",
+                                           " (legacy block in feature.yaml)" if where == "legacy" else ""))
     errors, warnings = validate(data, root, specs, os.path.dirname(path))
     for w in warnings:
         print("WARNING: %s" % w)
@@ -669,7 +725,7 @@ def cmd_finish(path, root, specs):
     if data.get("status") != "review":
         print("ERROR: feature status is '%s'; finish comes after `review`" % data.get("status"))
         return 1
-    blockers = finish_blockers(data)
+    blockers = finish_blockers(data, os.path.dirname(path))
     if blockers:
         print("ERROR: not done yet:\n  " + "\n  ".join(blockers))
         return 1
@@ -865,70 +921,170 @@ def cmd_roadmap(specs, approve=False):
 
 # ---------------------------------------------------------------- finding
 
-def cmd_finding(path, args):
-    text, data = load(path)
-    review = data.get("review") if isinstance(data.get("review"), dict) else {}
-    existing = as_list(review.get("findings"))
+def task_ids(data):
+    return {str(t.get("id")) for t in as_list(data.get("tasks")) if isinstance(t, dict)}
+
+
+def outcome_lines(args):
+    """The review.yaml lines of a finding's outcome, in the indent flow.py writes findings with."""
+    if args.action == "fix":
+        return ["    action: fix\n", "    task: %s\n" % args.task]
+    return ["    action: wontfix\n", "    reason: %s\n" % json.dumps(args.reason, ensure_ascii=False)]
+
+
+def finding_outcome_error(args, tasks):
+    """Why --action/--task/--reason do not make a valid outcome, or None."""
+    if args.action == "fix" and not args.task:
+        return "a fix finding names the task that fixes it: --task T<n>"
+    if args.action == "fix" and args.task not in tasks:
+        return "task %s does not exist in feature.yaml" % args.task
+    if args.action == "wontfix" and not args.reason:
+        return "a wontfix finding needs --reason"
+    if (args.task or args.reason) and not args.action:
+        return "--task and --reason go with --action"
+    return None
+
+
+def describe_outcome(finding):
+    action = finding.get("action")
+    if action == "fix":
+        return "fix %s" % finding.get("task")
+    return action or "no action"
+
+
+def set_outcome(path, data, args):
+    """finding <feature> R-n --action ...: set or replace the outcome of one finding in review.yaml."""
+    rpath = review_path(os.path.dirname(path))
+    if not os.path.isfile(rpath):
+        print("ERROR: %s has no review.yaml yet: record the finding first" % data.get("id"))
+        return 1
+    extra = [k for k in ("text", "source", "severity", "confidence", "file", "line", "hunk", "fix", "comment_id")
+             if getattr(args, k) is not None] + (["none"] if args.none else [])
+    if extra:
+        print("ERROR: %s takes only --action with --task or --reason (not --%s)"
+              % (args.target, ", --".join(k.replace("_", "-") for k in extra)))
+        return 1
+    if not args.action:
+        print("ERROR: give the outcome: --action fix --task T<n> | --action wontfix --reason R")
+        return 1
+    tasks = task_ids(data)
+    problem = finding_outcome_error(args, tasks)
+    if problem:
+        print("ERROR: " + problem)
+        return 1
+    text, doc = load(rpath)
+    found = next((f for f in as_list(doc.get("findings"))
+                  if isinstance(f, dict) and str(f.get("id")) == args.target), None)
+    if found is None:
+        print("ERROR: review.yaml has no finding %s" % args.target)
+        return 1
+    lines = text.splitlines(True)
+    start = next((i for i, l in enumerate(lines)
+                  if re.match(r"^  - id: %s\s*(#.*)?$" % re.escape(args.target), l.rstrip("\n"))), None)
+    if start is None:
+        print("ERROR: %s is not written in block form in review.yaml; rewrite it as `- id: %s` with one key per line"
+              % (args.target, args.target))
+        return 1
+    outcome = outcome_lines(args)
+
+    def change(lines):
+        end = block_end(lines, start, 2)
+        body = [l for l in lines[start + 1:end] if not re.match(r"^    (action|task|reason):", l)]
+        lines[start + 1:end] = body + outcome
+
+    def applied(d):
+        f = next(f for f in as_list(d.get("findings")) if isinstance(f, dict) and str(f.get("id")) == args.target)
+        return f.get("action") == args.action and (f.get("task") == args.task if args.action == "fix"
+                                                   else f.get("reason") == args.reason and "task" not in f)
+
+    old = describe_outcome(found)
+    edit(rpath, text, change, applied)
+    print("%s %s: %s -> %s" % (data.get("id"), args.target, old,
+                               "fix %s" % args.task if args.action == "fix" else "wontfix"))
+    return 0
+
+
+def cmd_finding(path, args, root):
+    _, data = load(path)
+    if isinstance(data.get("review"), dict):
+        print("ERROR: feature.yaml holds a legacy review block: move it into review.yaml beside it first")
+        return 1
+    if args.target:
+        return set_outcome(path, data, args)
+    rpath = review_path(os.path.dirname(path))
+    exists = os.path.isfile(rpath)
+    if exists:
+        text, doc = load(rpath)
+        if not isinstance(doc.get("findings"), list):
+            print("ERROR: review.yaml: findings must be a list ([] for a clean review); fix the file first")
+            return 1
+    else:
+        sha = head_sha(root)
+        text = "base: %s\nhead: %s\ncreated: %s\nfindings: []\n" % (
+            json.dumps(str(data.get("base"))) if data.get("base") else "null",
+            json.dumps(sha) if sha else "null", datetime.date.today().isoformat())
+        doc = yaml.safe_load(text)
+    existing = as_list(doc.get("findings"))
+    tasks = task_ids(data)
+
     if args.none:
         if existing:
             print("ERROR: the review already has %d finding(s)" % len(existing))
             return 1
         item = None
     else:
-        if not args.text or not args.action:
-            print("ERROR: a finding needs --text and --action (or use --none for a clean review)")
+        problem = None
+        if not args.text:
+            problem = "a finding needs --text (or use --none for a clean review)"
+        elif not args.source:
+            problem = "a finding needs --source (%s)" % ", ".join(SOURCES)
+        elif args.source == "pr-comment" and not args.comment_id:
+            problem = "a pr-comment finding needs --comment-id"
+        elif args.comment_id and args.source != "pr-comment":
+            problem = "--comment-id only goes with --source pr-comment"
+        elif args.comment_id and any(isinstance(f, dict) and str(f.get("comment_id")) == str(args.comment_id)
+                                     for f in existing):
+            problem = "comment %s is already recorded" % args.comment_id
+        elif args.line is not None and args.line < 1:
+            problem = "--line is a line number, 1 or more"
+        else:
+            problem = finding_outcome_error(args, tasks)
+        if problem:
+            print("ERROR: " + problem)
             return 1
-        if args.action == "fix" and not args.task:
-            print("ERROR: a fix finding names the task that fixes it: --task T<n>")
-            return 1
-        if args.action == "wontfix" and not args.reason:
-            print("ERROR: a wontfix finding needs --reason")
-            return 1
-        if not args.source:
-            print("ERROR: a finding needs --source (%s)" % ", ".join(SOURCES))
-            return 1
-        if args.source == "pr-comment" and not args.comment_id:
-            print("ERROR: a pr-comment finding needs --comment-id")
-            return 1
-        if args.comment_id and args.source != "pr-comment":
-            print("ERROR: --comment-id only goes with --source pr-comment")
-            return 1
-        if args.comment_id and any(isinstance(f, dict) and str(f.get("comment_id")) == str(args.comment_id)
-                                   for f in existing):
-            print("ERROR: comment %s is already recorded" % args.comment_id)
-            return 1
-        item = ["    - text: %s\n" % json.dumps(args.text, ensure_ascii=False),
-                "      action: %s\n" % args.action]
-        if args.task:
-            item.append("      task: %s\n" % args.task)
-        if args.reason:
-            item.append("      reason: %s\n" % json.dumps(args.reason, ensure_ascii=False))
-        item.append("      source: %s\n" % args.source)
+        numbers = [int(m.group(1)) for f in existing if isinstance(f, dict)
+                   for m in [re.match(r"^R-([0-9]+)$", str(f.get("id") or ""))] if m]
+        fid = "R-%d" % (max(numbers) + 1 if numbers else 1)
+        item = ["  - id: %s\n" % fid, "    text: %s\n" % json.dumps(args.text, ensure_ascii=False),
+                "    source: %s\n" % args.source]
+        for key in ("severity", "confidence"):
+            if getattr(args, key):
+                item.append("    %s: %s\n" % (key, getattr(args, key)))
+        for key in ("file", "hunk", "fix"):
+            if getattr(args, key):
+                item.append("    %s: %s\n" % (key, json.dumps(getattr(args, key), ensure_ascii=False)))
+        if args.line is not None:
+            item.append("    line: %d\n" % args.line)
         if args.comment_id:
-            item.append("      comment_id: %d\n" % args.comment_id)
+            item.append("    comment_id: %d\n" % args.comment_id)
+        if args.action:
+            item.extend(outcome_lines(args))
 
     def change(lines):
-        top = next((i for i, l in enumerate(lines) if re.match(r"^review:(\s|$)", l)), None)
+        top = next((i for i, l in enumerate(lines) if re.match(r"^findings:(\s|$)", l)), None)
         if top is None:
-            lines.append("review:\n")
+            lines.append("findings: []\n")
             top = len(lines) - 1
-        elif lines[top].split("#")[0].strip() != "review:":
-            lines[top] = "review:\n"
-        end = block_end(lines, top, 0)
-        found = next((i for i in range(top + 1, end) if re.match(r"^  findings:(\s|$)", lines[i])), None)
-        if found is None:
-            lines.insert(top + 1, "  findings:\n")
-            found = top + 1
-        elif lines[found].split("#")[0].strip() != "findings:":
-            lines[found] = "  findings:\n" if item else "  findings: []\n"
         if item is None:
-            lines[found] = "  findings: []\n"
+            lines[top] = "findings: []\n"
             return
-        lines[block_end(lines, found, 2):block_end(lines, found, 2)] = item
+        lines[top] = "findings:\n"
+        at = block_end(lines, top, 0)
+        lines[at:at] = item
 
-    edit(path, text, change, lambda d: len(as_list((d.get("review") or {}).get("findings"))) ==
-         len(existing) + (0 if item is None else 1))
-    print("%s: %s" % (data.get("id"), "clean review recorded" if item is None else "finding recorded"))
+    edit(rpath, text, change, lambda d: len(as_list(d.get("findings"))) == len(existing) + (0 if item is None else 1)
+         and (item is not None or d.get("findings") == []))
+    print("%s: %s" % (data.get("id"), "clean review recorded" if item is None else "%s recorded" % fid))
     return 0
 
 
@@ -1004,6 +1160,7 @@ def main(argv=None):
     roadmap.add_argument("--approve", action="store_true", help="stamp today as the approval date, once the roadmap is valid")
     finding = sub.add_parser("finding")
     finding.add_argument("feature")
+    finding.add_argument("target", nargs="?", help="R-n: set or change the outcome of that finding")
     finding.add_argument("--text")
     finding.add_argument("--action", choices=("fix", "wontfix"))
     finding.add_argument("--task", help="with fix: the task that fixes it")
@@ -1011,6 +1168,12 @@ def main(argv=None):
     finding.add_argument("--none", action="store_true", help="record a clean review (findings: [])")
     finding.add_argument("--source", choices=SOURCES, help="where the finding comes from")
     finding.add_argument("--comment-id", type=int, help="with pr-comment: the id of the PR comment")
+    finding.add_argument("--severity", choices=SEVERITIES)
+    finding.add_argument("--confidence", choices=CONFIDENCES)
+    finding.add_argument("--file", help="the file the finding points at, as it stands at HEAD ('-' when none)")
+    finding.add_argument("--line", type=int, help="the line in that file at HEAD")
+    finding.add_argument("--hunk", help="the quoted code or spec line")
+    finding.add_argument("--fix", help="the suggested fix, in one sentence")
     pr = sub.add_parser("pr")
     pr.add_argument("feature")
     pr.add_argument("--url", required=True, help="the pull request that delivers the feature")
@@ -1033,7 +1196,7 @@ def main(argv=None):
         return cmd_new(specs, args)
     path = resolve(args.feature, specs)
     if args.command == "finding":
-        return cmd_finding(path, args)
+        return cmd_finding(path, args, root)
     if args.command == "pr":
         return cmd_pr(path, args.url)
     if args.command == "approve":
