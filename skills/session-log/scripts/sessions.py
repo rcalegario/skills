@@ -88,9 +88,12 @@ def read_records(path):
 
 
 def calls(records):
-    """Ordered tool calls: {n, tool, input, result, is_error}, results paired by tool_use id."""
+    """Ordered tool calls: {n, tool, input, result, is_error}, results paired by tool_use id. Only the
+    conversation's own records count: others, like api-request-blob, repeat its content."""
     out, by_id = [], {}
     for rec in records:
+        if rec.get("type") not in ("assistant", "user"):
+            continue
         content = (rec.get("message") or {}).get("content")
         if not isinstance(content, list):
             continue

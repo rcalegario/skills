@@ -611,3 +611,15 @@ def test_hook_rejects_named_logs(tmp_path, capsys, monkeypatch):
         sessions.main(["--config", str(config(tmp_path)), "extract", "--hook", "a.jsonl"])
     assert exc.value.code == 2
     assert "--hook" in capsys.readouterr().err
+
+
+def test_request_copies_are_not_calls(tmp_path, capsys):
+    log = Log().prompt().call("Skill", {"skill": "tdd"}).bash("ls")
+    copy = {"type": "api-request-blob", "message": {"role": "assistant", "content": [
+        dict(log.records[1]["message"]["content"][0])]}}
+    log.records.insert(2, copy)
+    log.records.append(copy)
+    d = digest(tmp_path, log, capsys)
+    assert d["calls"] == {"total": 2, "by_tool": {"Bash": 1, "Skill": 1}}
+    assert d["skills"] == {"tdd": 1}
+    assert d["repeats"] == []
