@@ -36,8 +36,11 @@ The `Source` is the value `flow.py finding --source` accepts:
 |---|---|
 | Spec | `spec-review` |
 | Standards | `standards-review` |
+| Correctness | `correctness-review` |
+| Tests | `tests-review` |
+| Security | `security-review` |
 
-More axes add their own sources (correctness, tests, security), listed here when they exist.
+Docs and ficha reports hints, not findings: it has no source and `flow.py finding` does not record it.
 
 ## Under each axis
 

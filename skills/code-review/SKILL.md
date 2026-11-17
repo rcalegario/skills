@@ -75,7 +75,7 @@ When there is no spec, skip the Spec sub-agent.
 
 ### 6. Verify the serious findings
 
-For each axis that returned a `blocker` or `should-fix`, start **one** new sub-agent with a fresh context window and give it only the `blocker` and `should-fix` findings of that axis, the diff command, the same sources as its axis (for Standards, the smell baseline pasted in full again) and the failed checks from step 4. Brief: "Try to refute each finding against the code: read the surrounding code and the spec or rule it cites, and look for a guard, a caller or a requirement that makes it wrong. Check every cited `file:line` against the file and correct it when it is off. Answer per finding: `kept`, `downgraded to <severity>` or `dropped`, with one sentence of evidence."
+For each axis (Standards, Spec, Correctness, Tests, Security) that returned a `blocker` or `should-fix`, start **one** new sub-agent with a fresh context window and give it only the `blocker` and `should-fix` findings of that axis, the diff command, the same sources as its axis (for Standards, the smell baseline pasted in full again; for Correctness, Tests and Security, the paths they were given) and the failed checks from step 4. Brief: "Try to refute each finding against the code: read the surrounding code and the spec or rule it cites, and look for a guard, a caller or a requirement that makes it wrong. Check every cited `file:line` against the file and correct it when it is off. Answer per finding: `kept`, `downgraded to <severity>` or `dropped`, with one sentence of evidence."
 
 - `kept` and `downgraded` findings go into the report with their final severity.
 - `dropped` ones are not hidden: they go under **Dropped by verify**, with the finding and the refuter's reason, so the user can overrule.
@@ -92,9 +92,9 @@ These are hints, not findings: they carry no severity, have no `Source` and skip
 
 Before writing, check every cited `file:line`, nits included, against the file with `cat -n` and correct the ones that are off.
 
-Write one section per axis, under `## Standards` and `## Spec`, with the findings in the format of `reference/findings.md`. The order is `## Checks` (what step 4 found: failures, files the checks created, warnings), `## Standards`, `## Spec`, `## Dropped by verify` (write "None" when nothing was dropped), then the summary lines. Do **not** merge or rerank findings across axes: the separation exists to prevent that, so a defect both axes raise stays in both.
+Write one section per axis, with the findings in the format of `reference/findings.md`. The order is `## Checks` (what step 4 found: failures, files the checks created, warnings), `## Standards`, `## Spec`, `## Correctness`, `## Tests`, `## Security`, `## Docs and ficha` (what step 7 found), `## Dropped by verify` (write "None" when nothing was dropped), then the summary lines. A skipped axis keeps its heading and one line: `Spec skipped: no spec available`, or `Security skipped: <why>` naming the signal that did not fire. Do **not** merge or rerank findings across axes: the separation exists to prevent that, so a defect both axes raise stays in both.
 
-The summary has one line per axis: how many findings, and the worst one in that axis (the first of the highest severity); add a line for **Checks** when something failed or warned. Never pick a single winner across axes.
+The summary has one line per axis that ran: how many findings, and the worst one in that axis (the first of the highest severity); a skipped axis gets "skipped", **Docs and ficha** gets the count of files that look stale, and **Checks** gets a line when something failed or warned. Never pick a single winner across axes.
 
 ## Why separate axes
 
