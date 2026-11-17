@@ -42,4 +42,4 @@ Steps for a fresh clone or a new machine. Each one can run again on a machine al
    git -C ~/Projects/skills config core.hooksPath .githooks
    ```
 
-The six skills are linked straight to this repo. If skills-manager ever lists one of them (`flow`, `task`, `spec-lite`, `tlc-spec-driven`, `idea-triage`, `retro-report`), remove it from the manager: it would replace the links with its own copy.
+The seven skills are linked straight to this repo. If skills-manager ever lists one of them (`flow`, `task`, `spec-lite`, `tlc-spec-driven`, `idea-triage`, `retro-report`, `code-review`), remove it from the manager: it would replace the links with its own copy.
