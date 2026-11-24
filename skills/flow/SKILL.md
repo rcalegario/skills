@@ -91,7 +91,7 @@ An S plan that grows past 3 steps becomes M.
 - other people depend on the result, or a screen must match a given design pixel for pixel;
 - criteria only a human can prove in a real environment (UAT).
 
-Say which signal fired, then suggest, in this order: (1) **split** into features that fit M or L, proposing the cut (and the matching roadmap change, when there is a roadmap); (2) when splitting does not remove the risk, move to `/tlc-spec-driven`. The user decides (**question** format, one option per path). A chosen split changes the roadmap, which then gets its own **plan** stop.
+Say which signal fired, then suggest, in this order: (1) **split** into features that fit M or L, proposing the cut (and the matching roadmap change, when there is a roadmap); (2) when splitting does not remove the risk, move to the official [tlc-spec-driven](https://github.com/tech-leads-club/agent-skills/tree/main/packages/skills-catalog/skills/%28development%29/tlc-spec-driven). The user decides (**question** format, one option per path). A chosen split changes the roadmap, which then gets its own **plan** stop.
 
 ## SPEC (M and L)
 

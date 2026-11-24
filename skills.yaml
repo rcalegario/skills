@@ -8,12 +8,12 @@ own:
   - name: flow
     test: uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts
     references:
-      - skill: tlc-spec-driven
+      - repo: https://github.com/tech-leads-club/agent-skills
+        path: packages/skills-catalog/skills/(development)/tlc-spec-driven
+        commit: 8658b66
+        license: CC-BY-4.0
         relation: derived
         took: Criteria proved by checks, with every gate enforced by a tested script
-      - skill: spec-lite
-        relation: derived
-        took: YAML state for roadmap and features, changed only through the script
       - repo: https://github.com/humanlayer/skills
         path: plugins/show-me/skills/show-me
         commit: 4d69d20f6e9b
@@ -48,29 +48,6 @@ own:
         license: MIT
         relation: derived
         took: The whole review process, two parallel axes (Standards with a Fowler smell baseline, Spec) reported apart and never reranked; the review file written through flow.py is our addition
-
-  - name: spec-lite
-    test: uv run --no-project --with pyyaml python -m unittest discover -s tests
-    references:
-      - skill: tlc-spec-driven
-        relation: derived
-        took: Spec, tasks, execute and validate per feature, made lighter for personal projects
-
-  - name: tlc-spec-driven
-    test: python3 -I scripts/selftest.py && python3 -I -m unittest discover -s tests
-    references:
-      - repo: https://github.com/tech-leads-club/agent-skills
-        path: packages/skills-catalog/skills/(development)/tlc-spec-driven
-        commit: 8658b66
-        license: CC-BY-4.0
-        relation: fork
-        took: The whole skill at upstream 4.1.0; local changes are listed in its MODS.md
-      - repo: https://github.com/humanlayer/skills
-        path: plugins/show-me/skills/show-me
-        commit: 4d69d20f6e9b
-        license: MIT
-        relation: derived
-        took: A copy of show-me in references/show-me.md, credited in its header
 
   - name: idea-triage
     test: ""

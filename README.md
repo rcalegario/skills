@@ -6,8 +6,6 @@ Agent skills I wrote or forked, for Claude Code and other agents that read `SKIL
 |---|---|
 | `flow` | Lean feature workflow: spec, tasks, one commit per task, every criterion proved by a check |
 | `task` | A versioned task folder that carries work from its base text to a draft PR |
-| `spec-lite` | Lightweight spec-driven flow for personal and small projects |
-| `tlc-spec-driven` | Fork of tech-leads-club's spec-driven skill |
 | `idea-triage` | Triage new ideas against a catalog of projects |
 | `retro-report` | Retro over the sessions no retro has read yet, minus those a triage judged skip (`pending --all` or a named session reaches them), with its fixes tracked as a roadmap |
 | `code-review` | Review a diff on separate axes, with structured findings that `/flow` can record |
@@ -27,8 +25,7 @@ What each skill is built from. Edit `skills.yaml`, then run `python scripts/skil
 
 ### flow
 
-- derived from [tlc-spec-driven](skills/tlc-spec-driven) - Criteria proved by checks, with every gate enforced by a tested script
-- derived from [spec-lite](skills/spec-lite) - YAML state for roadmap and features, changed only through the script
+- derived from [tech-leads-club/agent-skills · tlc-spec-driven](https://github.com/tech-leads-club/agent-skills/tree/8658b66/packages/skills-catalog/skills/%28development%29/tlc-spec-driven) (CC-BY-4.0, `8658b66`) - Criteria proved by checks, with every gate enforced by a tested script
 - inspired by [humanlayer/skills · show-me](https://github.com/humanlayer/skills/tree/4d69d20f6e9b/plugins/show-me/skills/show-me) (MIT, `4d69d20f6e9b`) - Shapes, flows and changes shown as visuals in the docs people read
 
 ### task
@@ -40,15 +37,6 @@ What each skill is built from. Edit `skills.yaml`, then run `python scripts/skil
 ### code-review
 
 - derived from [mattpocock/skills · code-review](https://github.com/mattpocock/skills/tree/5863806dd4e1/skills/engineering/code-review) (MIT, `5863806dd4e1`) - The whole review process, two parallel axes (Standards with a Fowler smell baseline, Spec) reported apart and never reranked; the review file written through flow.py is our addition
-
-### spec-lite
-
-- derived from [tlc-spec-driven](skills/tlc-spec-driven) - Spec, tasks, execute and validate per feature, made lighter for personal projects
-
-### tlc-spec-driven
-
-- fork of [tech-leads-club/agent-skills · tlc-spec-driven](https://github.com/tech-leads-club/agent-skills/tree/8658b66/packages/skills-catalog/skills/%28development%29/tlc-spec-driven) (CC-BY-4.0, `8658b66`) - The whole skill at upstream 4.1.0; local changes are listed in its MODS.md
-- derived from [humanlayer/skills · show-me](https://github.com/humanlayer/skills/tree/4d69d20f6e9b/plugins/show-me/skills/show-me) (MIT, `4d69d20f6e9b`) - A copy of show-me in references/show-me.md, credited in its header
 
 ### idea-triage
 
@@ -70,4 +58,4 @@ What each skill is built from. Edit `skills.yaml`, then run `python scripts/skil
 
 ## License
 
-MIT (see `LICENSE`), except `skills/tlc-spec-driven`, a fork that stays under CC-BY-4.0 with attribution (see Credits and its `MODS.md`).
+MIT (see `LICENSE`).
