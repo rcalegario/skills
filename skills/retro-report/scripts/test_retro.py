@@ -1,57 +1,20 @@
 """Tests for retro.py. Run: python -m pytest <skill-dir>/scripts -q"""
 import datetime
-import json
 import os
 import re
+import subprocess
 import sys
+import time
+from pathlib import Path
 
+import pytest
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import retro  # noqa: E402
 
 SID = "s-1"
-
-
-class Log:
-    """Builds a Claude Code session log, one tool call at a time."""
-
-    def __init__(self, cwd="/work/repo"):
-        self.cwd = cwd
-        self.records = []
-        self.n = 0
-        self.minute = 0
-
-    def _ts(self):
-        self.minute += 1
-        return f"2026-11-14T10:{self.minute:02d}:00.000Z"
-
-    def prompt(self, text="do it"):
-        self.records.append({"type": "user", "sessionId": SID, "cwd": self.cwd, "timestamp": self._ts(),
-                             "message": {"role": "user", "content": text}})
-        return self
-
-    def call(self, tool, inp, result="ok", is_error=False, msg_id=None, usage=None):
-        self.n += 1
-        tid = f"toolu_{self.n}"
-        message = {"id": msg_id or f"msg_{self.n}", "role": "assistant",
-                   "content": [{"type": "tool_use", "id": tid, "name": tool, "input": inp}]}
-        if usage:
-            message["usage"] = usage
-        self.records.append({"type": "assistant", "sessionId": SID, "cwd": self.cwd,
-                             "timestamp": self._ts(), "message": message})
-        self.records.append({"type": "user", "sessionId": SID, "cwd": self.cwd, "timestamp": self._ts(),
-                             "message": {"role": "user", "content": [
-                                 {"type": "tool_result", "tool_use_id": tid, "content": result,
-                                  "is_error": is_error}]}})
-        return self
-
-    def bash(self, command, result="ok", **kw):
-        return self.call("Bash", {"command": command}, result, **kw)
-
-    def write(self, path):
-        path.write_text("".join(json.dumps(r) + "\n" for r in self.records))
-        return path
+TODAY = f"{datetime.date.today():%Y-%m-%d}"
 
 
 def run(capsys, *argv):
@@ -60,186 +23,47 @@ def run(capsys, *argv):
     return code, out, err
 
 
-def digest(tmp_path, log, capsys):
-    path = log.write(tmp_path / f"{SID}.jsonl")
-    code, out, err = run(capsys, "digest", str(path))
-    assert code == 0, err
-    return yaml.safe_load(out)[0]
-
-
-def test_digest_session_and_calls_per_tool(tmp_path, capsys):
-    log = Log().prompt().bash("ls").bash("git status").call("Read", {"file_path": "/work/repo/a.py"})
-    d = digest(tmp_path, log, capsys)
-    assert d["session"] == SID
-    assert d["project"] == "/work/repo"
-    assert d["start"] == "2026-11-14T10:01:00Z"
-    assert d["end"] == "2026-11-14T10:07:00Z"
-    assert d["duration_s"] == 360
-    assert d["calls"] == {"total": 3, "by_tool": {"Bash": 2, "Read": 1}}
-
-
-def test_not_a_session_log(tmp_path, capsys):
-    missing = tmp_path / "nope.jsonl"
-    code, out, err = run(capsys, "digest", str(missing))
-    assert code == 1
-    assert err.strip() == f"{missing} is not a Claude Code session log"
-
-    other = tmp_path / "other.jsonl"
-    other.write_text('{"type": "summary", "text": "x"}\nnot json\n')
-    code, out, err = run(capsys, "digest", str(other))
-    assert code == 1
-    assert err.strip() == f"{other} is not a Claude Code session log"
-
-
-def test_failure_classes_read_from_text(tmp_path, capsys):
-    long_tail = "x" * 300
-    log = (Log().prompt()
-           .bash("cat <<EOF | python", result="line one\n(eval):27: command not found: python")
-           .bash("python -c 'import yaml'", result="ModuleNotFoundError: No module named 'yaml'", is_error=True)
-           .call("Read", {"file_path": "/nope"}, result="File does not exist.", is_error=True)
-           .bash("cat /nope", result=f"cat: /nope: No such file or directory {long_tail}")
-           .bash("touch /etc/x", result="touch: /etc/x: Permission denied")
-           .bash("ls", result="fine"))
-    f = digest(tmp_path, log, capsys)["failures"]
-    assert f["command_missing"] == [{"call": 1, "tool": "Bash", "line": "(eval):27: command not found: python"}]
-    assert f["module_missing"] == [{"call": 2, "tool": "Bash",
-                                    "line": "ModuleNotFoundError: No module named 'yaml'"}]
-    assert [e["call"] for e in f["file_missing"]] == [3, 4]
-    assert len(f["file_missing"][1]["line"]) == 200
-    assert f["permission_denied"] == [{"call": 5, "tool": "Bash", "line": "touch: /etc/x: Permission denied"}]
-    assert "other" not in f
-
-
-def test_unmatched_error_is_other(tmp_path, capsys):
-    log = Log().prompt().bash("make", result="Exit code 2\nbuild broke", is_error=True).bash("echo", result="ok")
-    f = digest(tmp_path, log, capsys)["failures"]
-    assert f == {"other": [{"call": 1, "tool": "Bash", "line": "Exit code 2"}]}
-
-
-def test_file_contents_are_not_failures(tmp_path, capsys):
-    log = Log().prompt().call("Read", {"file_path": "retro.md"}, result="Finding: command not found: python")
-    assert digest(tmp_path, log, capsys)["failures"] == {}
-
-
-def test_identical_calls_are_repeats(tmp_path, capsys):
-    long_cmd = "echo " + "y" * 200
-    log = (Log().prompt().bash("git status").bash("ls").bash("git status").bash(long_cmd).bash(long_cmd)
-           .call("Read", {"file_path": "a.py"}).call("Read", {"file_path": "a.py", "offset": 10})
-           .bash("git status"))
-    repeats = digest(tmp_path, log, capsys)["repeats"]
-    assert repeats == [{"tool": "Bash", "input": "git status", "count": 3},
-                       {"tool": "Bash", "input": long_cmd[:120], "count": 2}]
-
-
-def test_search_streak_of_three(tmp_path, capsys):
-    log = (Log().prompt()
-           .bash("cd /work; grep -rn NOW-5 tasks | head")            # 1 search
-           .bash("for d in */; do echo $d; grep -c x $d/a; done")    # 2 search: loop words and echo are neutral
-           .call("Grep", {"pattern": "NOW-5"})                       # 3 search
-           .call("Read", {"file_path": "now.md"})                    # 4 search
-           .bash("python3 status.py .")                              # 5 not a search: breaks the run
-           .bash("cat a").bash("ls b")                               # 6, 7: only two in a row
-           .call("Edit", {"file_path": "a"}))
-    streaks = digest(tmp_path, log, capsys)["search_streaks"]
-    assert streaks == [{"calls": [1, 2, 3, 4], "commands": [
-        "cd /work; grep -rn NOW-5 tasks | head",
-        "for d in */; do echo $d; grep -c x $d/a; done",
-        "Grep NOW-5",
-        "Read now.md"]}]
-
-
-def usage(i, o, cr, cw):
-    return {"input_tokens": i, "output_tokens": o, "cache_read_input_tokens": cr, "cache_creation_input_tokens": cw}
-
-
-def test_tokens_once_per_message_and_cost(tmp_path, capsys):
-    log = (Log().prompt()
-           .bash("ls", msg_id="m1", usage=usage(1, 10, 100, 1000))
-           .bash("pwd", msg_id="m1", usage=usage(1, 10, 100, 1000))     # same message, second block
-           .bash("git status", msg_id="m2", usage=usage(2, 20, 200, 2000)))
-    d = digest(tmp_path, log, capsys)
-    assert d["tokens"] == {"input": 3, "output": 30, "cache_read": 300, "cache_write": 3000}
-    assert d["cost_usd"] is None
-
-    log.records.append({"type": "cost-state", "totalCostUSD": 1.2647382999999996})
-    assert digest(tmp_path, log, capsys)["cost_usd"] == 1.2647382999999996
-
-
-def test_subagents_apart(tmp_path, capsys):
-    sub_dir = tmp_path / SID / "subagents"
-    sub_dir.mkdir(parents=True)
-    Log().prompt().bash("ls", usage=usage(1, 2, 3, 4)).bash("pwd").write(sub_dir / "agent-a1.jsonl")
-    (sub_dir / "agent-a1.meta.json").write_text('{"agentType": "general-purpose", "description": "Standards review"}')
-    d = digest(tmp_path, Log().prompt().call("Agent", {"prompt": "review"}), capsys)
-    assert d["calls"] == {"total": 1, "by_tool": {"Agent": 1}}
-    assert d["subagents"] == [{"id": "a1", "description": "Standards review", "calls": 2,
-                               "tokens": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4}}]
-
-
-def test_loop_bodies_and_writes_are_not_searches(tmp_path, capsys):
-    log = (Log().prompt()
-           .bash("for f in *; do rm $f; done; ls")
-           .bash("if x; then git push; fi; cat a")
-           .bash("sed -i '' s/a/b/ f")
-           .bash("cat > f <<EOF")
-           .bash("find . -name '*.tmp' -delete")
-           .bash("grep a b").bash("ls").bash("for d in */; do grep -c x $d/a; done"))
-    assert digest(tmp_path, log, capsys)["search_streaks"] == [{"calls": [6, 7, 8], "commands": [
-        "grep a b", "ls", "for d in */; do grep -c x $d/a; done"]}]
-
-
-def test_http_not_found_is_not_command_missing(tmp_path, capsys):
-    log = (Log().prompt()
-           .bash("curl x", result="HTTP/1.1 404: Not Found")
-           .bash("sh -c foo", result="sh: 1: foo: not found"))
-    assert digest(tmp_path, log, capsys)["failures"] == {
-        "command_missing": [{"call": 2, "tool": "Bash", "line": "sh: 1: foo: not found"}]}
-
-
-def test_last_usage_of_a_message_wins(tmp_path, capsys):
-    log = (Log().prompt()
-           .bash("ls", msg_id="m1", usage=usage(1, 5, 0, 0))
-           .bash("pwd", msg_id="m1", usage=usage(1, 40, 0, 0)))
-    assert digest(tmp_path, log, capsys)["tokens"]["output"] == 40
-
-
-def test_subagent_without_meta_and_parent_tokens_apart(tmp_path, capsys):
-    sub_dir = tmp_path / SID / "subagents"
-    sub_dir.mkdir(parents=True)
-    Log().prompt().bash("ls", usage=usage(7, 7, 7, 7)).write(sub_dir / "agent-b2.jsonl")
-    d = digest(tmp_path, Log().prompt().call("Agent", {"prompt": "x"}, usage=usage(1, 1, 1, 1)), capsys)
-    assert d["subagents"][0]["description"] is None
-    assert d["tokens"] == {"input": 1, "output": 1, "cache_read": 1, "cache_write": 1}
-
-
-def test_digest_many_logs_as_list(tmp_path, capsys):
-    a = Log(cwd="/work/a").prompt().bash("ls").write(tmp_path / "a.jsonl")
-    b = Log(cwd="/work/b").prompt().bash("ls").bash("pwd").write(tmp_path / "b.jsonl")
-    code, out, err = run(capsys, "digest", str(b), str(a))
-    assert code == 0, err
-    assert [(d["project"], d["calls"]["total"]) for d in yaml.safe_load(out)] == [("/work/b", 2), ("/work/a", 1)]
+EVIDENCE = [{"call": 20, "excerpt": "python: command not found"}]
 
 
 def finding(id=1, **kw):
-    return {"id": id, "category": "automated-checks", "what": "python is missing", "fix": "a hook runs it",
-            **kw}
+    """A valid finding: accepted, or wontfix when given a wontfix reason."""
+    return {"id": id, "category": "automated-checks", "severity": "high",
+            "status": "wontfix" if "wontfix" in kw else "accepted", "what": "python is missing",
+            "evidence": EVIDENCE, "fix": "a hook runs it", "lands_in": ".githooks/pre-commit", **kw}
+
+
+def finding_without(*keys, **kw):
+    """A finding with the keys dropped."""
+    f = finding(**kw)
+    for key in keys:
+        f.pop(key)
+    return f
+
+
+def validate_errors(tmp_path, capsys, *findings):
+    """validate's error lines for a retro holding findings, after checking it exits 1."""
+    folder = retro_folder(tmp_path, findings=list(findings))
+    code, out, err = run(capsys, "validate", str(folder))
+    assert (code, out) == (1, "")
+    return err.splitlines()
 
 
 def retro_folder(tmp_path, drop=(), **retro):
     """A retro folder whose retro.yaml is a valid one changed by retro, minus the fields in drop."""
-    data = {"date": datetime.date(2026, 11, 14), "title": "checkers on commit", "summary": "Built a hook.\n",
-            "sources": {"sessions": [SID]}, "findings": [finding(feature="F1.1")],
+    data = {"created": datetime.datetime(2026, 11, 14, 8, 39, tzinfo=datetime.timezone(datetime.timedelta(hours=-3))), "title": "checkers on commit", "summary": "Built a hook.\n",
+            "session": SID, "findings": [finding(feature="F1.1")],
             "decisions": ["Hooks live in .githooks/."], **retro}
     for key in drop:
         data.pop(key)
     folder = tmp_path / "2026-11-14-checkers"
     folder.mkdir(exist_ok=True)
     (folder / "retro.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
-    (folder / "sessions.yaml").write_text(yaml.safe_dump(SESSIONS, sort_keys=False))
     return folder
 
 
-SESSIONS = [{"session": SID, "project": "/work/repo", "duration_s": 754, "calls": {"total": 32},
+SESSIONS = [{"session": SID, "project": "/work/repo", "start": "2026-11-14T09:00:00Z", "end": "2026-11-14T09:12:34Z",
+             "duration_s": 754, "calls": {"total": 32},
              "failures": {"command_missing": [{"call": 20}], "other": [{"call": 3}, {"call": 9}]},
              "search_streaks": [{"calls": [1, 2, 3]}], "cost_usd": 1.2647382999999996}]
 
@@ -250,25 +74,117 @@ def test_validate_ok(tmp_path, capsys):
 
 
 def test_validate_missing_and_wrong_types(tmp_path, capsys):
-    folder = retro_folder(tmp_path, drop=["title"], date=datetime.datetime(2026, 11, 14, 10, 30), summary=3, decisions="none",
-                          findings=[finding(1), finding(1, what=""), finding(None), finding(2, sessions="s-1"),
-                                    finding(3, sessions=[SID, "zzz"])])
+    folder = retro_folder(tmp_path, drop=["title"], created=datetime.datetime(2026, 11, 14, 10, 30), summary=3,
+                          decisions="none",
+                          findings=[finding(1), finding(1, what=""), finding(None)])
     code, out, err = run(capsys, "validate", str(folder))
     assert code == 1
     assert err.splitlines() == [
-        "retro.yaml: date: must be a date (YYYY-MM-DD)",
+        "retro.yaml: created: must be a date-time with a timezone (2026-11-14T08:39:00-03:00)",
         "retro.yaml: title: missing",
         "retro.yaml: summary: must be text",
         "retro.yaml: decisions: must be a list of text",
         "retro.yaml: findings[1].id: used twice",
         "retro.yaml: findings[1].what: must be text",
         "retro.yaml: findings[#3].id: must be an integer",
-        "retro.yaml: findings[2].sessions: must be a list of text",
-        "retro.yaml: findings[3].sessions: zzz is not in sources.sessions",
     ]
 
     (folder / "retro.yaml").unlink()
     assert run(capsys, "validate", str(folder))[2] == "retro.yaml: missing\n"
+
+
+def test_evidence_missing_or_empty(tmp_path, capsys):
+    assert validate_errors(tmp_path, capsys, finding_without("evidence"), finding(2, evidence=[]),
+                           finding(3, evidence={"call": 1})) == [
+        "retro.yaml: findings[1].evidence: missing",
+        "retro.yaml: findings[2].evidence: must be a non-empty list",
+        "retro.yaml: findings[3].evidence: must be a non-empty list",
+    ]
+
+
+def test_evidence_call_xor_at(tmp_path, capsys):
+    both = {"call": 3, "at": "2026-11-14T10:00:00Z", "excerpt": "x"}
+    assert validate_errors(tmp_path, capsys, finding(evidence=[EVIDENCE[0], both, {"excerpt": "x"}, "call 3"])) == [
+        "retro.yaml: findings[1].evidence[#2]: needs call or at, not both",
+        "retro.yaml: findings[1].evidence[#3]: needs call or at, not both",
+        "retro.yaml: findings[1].evidence[#4]: must be a mapping",
+    ]
+
+
+def test_evidence_call_form(tmp_path, capsys):
+    items = [{"call": v, "excerpt": "x"} for v in (0, -2, "12", True, 1.5)]
+    assert validate_errors(tmp_path, capsys, finding(evidence=items)) == [
+        f"retro.yaml: findings[1].evidence[#{k}].call: must be a positive whole number" for k in range(1, 6)]
+
+
+def test_evidence_at_form(tmp_path, capsys):
+    items = [{"at": v, "excerpt": "x"} for v in (datetime.datetime(2026, 11, 14, 10), "2026-11-14T10:00:00",
+                                                   "13:12:42", datetime.date(2026, 11, 14), "not a time")]
+    assert validate_errors(tmp_path, capsys, finding(evidence=items)) == [
+        f"retro.yaml: findings[1].evidence[#{k}].at: must be a timestamp with a timezone (2026-11-17T13:12:42Z)"
+        for k in range(1, 6)]
+
+
+def test_evidence_excerpt_limits(tmp_path, capsys):
+    items = [{"call": 1}, {"call": 2, "excerpt": 7}, {"call": 3, "excerpt": " "},
+             {"call": 4, "excerpt": "a\nb\nc\nd\n"}, {"call": 5, "excerpt": "x" * 301},
+             {"call": 6, "excerpt": ("y" * 100 + "\n") * 4},
+             {"call": 7, "excerpt": "a\nb\nc\n"}, {"call": 8, "excerpt": "  " + "z" * 300 + "\n"}]
+    assert validate_errors(tmp_path, capsys, finding(evidence=items)) == [
+        "retro.yaml: findings[1].evidence[#1].excerpt: missing",
+        "retro.yaml: findings[1].evidence[#2].excerpt: must be text",
+        "retro.yaml: findings[1].evidence[#3].excerpt: must be text",
+        "retro.yaml: findings[1].evidence[#4].excerpt: 4 lines, at most 3",
+        "retro.yaml: findings[1].evidence[#5].excerpt: 301 characters, at most 300",
+        "retro.yaml: findings[1].evidence[#6].excerpt: 4 lines, at most 3",
+        "retro.yaml: findings[1].evidence[#6].excerpt: 403 characters, at most 300",
+    ]
+
+
+def test_evidence_call_past_session(tmp_path, capsys):
+    folder = retro_folder(tmp_path, findings=[finding(evidence=[{"call": 32, "excerpt": "x"},
+                                                                {"call": 33, "excerpt": "x"}])])
+    for cmd in ("validate", "render"):
+        assert run(capsys, cmd, str(folder)) == (
+            1, "", "retro.yaml: findings[1].evidence[#2].call: 33 is past the session's 32 calls\n")
+    assert not (folder / "retro.md").exists()
+
+
+def test_evidence_at_outside_session(tmp_path, capsys):
+    at = ["2026-11-14T08:59:59Z", "2026-11-14T11:12:35+02:00", "2026-11-14T09:12:34Z", "2026-11-14T10:00:00+01:00"]
+    folder = retro_folder(tmp_path, findings=[finding(evidence=[{"at": a, "excerpt": "x"} for a in at])])
+    span = "(2026-11-14T09:00:00Z to 2026-11-14T09:12:34Z)"
+    for cmd in ("validate", "render"):
+        assert run(capsys, cmd, str(folder)) == (1, "", f"""\
+retro.yaml: findings[1].evidence[#1].at: 2026-11-14T08:59:59Z is outside the session {span}
+retro.yaml: findings[1].evidence[#2].at: 2026-11-14T09:12:35Z is outside the session {span}
+""")
+
+
+def test_evidence_at_without_session_span(tmp_path, capsys, monkeypatch):
+    fake_session_log(tmp_path, monkeypatch, {**SESSIONS[0], "start": None})
+    folder = retro_folder(tmp_path, findings=[finding(evidence=[{"at": "2026-11-14T09:05:00Z", "excerpt": "x"}])])
+    assert run(capsys, "validate", str(folder)) == (1, "", "retro.yaml: findings[1].evidence[#1].at: "
+        "2026-11-14T09:05:00Z is outside the session (the session-log file has no start and end)\n")
+
+
+def test_evidence_valid(tmp_path, capsys):
+    items = [{"call": 1, "excerpt": "a\nb\nc\n"}, {"call": 32, "excerpt": "x" * 300},
+             {"at": datetime.datetime(2026, 11, 14, 9, 5, tzinfo=datetime.timezone.utc), "excerpt": "unquoted"},
+             {"at": "2026-11-14T09:00:00Z", "excerpt": "quoted"}]
+    folder = retro_folder(tmp_path, findings=[finding(evidence=items)])
+    assert "  - at: 2026-11-14 09:05:00+00:00\n" in (folder / "retro.yaml").read_text()
+    assert run(capsys, "validate", str(folder)) == (0, f"{folder} OK\n", "")
+
+
+def test_check_evidence_shape_without_session_log(tmp_path, capsys, session_log_metrics):
+    planned_retro(tmp_path, [finding_without("evidence", feature="F1.1"), finding(2, evidence=[{"call": 0}])])
+    assert run(capsys, "--config", str(tmp_path / "config.yaml"), "check") == (1, "", """\
+2026-11-14-checkers: retro.yaml: findings[1].evidence: missing
+2026-11-14-checkers: retro.yaml: findings[2].evidence[#1].call: must be a positive whole number
+2026-11-14-checkers: retro.yaml: findings[2].evidence[#1].excerpt: missing
+""")
+    assert asked(session_log_metrics) == []
 
 
 def test_validate_unknown_category(tmp_path, capsys):
@@ -279,60 +195,102 @@ def test_validate_unknown_category(tmp_path, capsys):
                    "coding-standards, global-agents-md, tool-economy, no-ops, information-access\n")
 
 
-def test_validate_feature_and_wontfix_exclusive(tmp_path, capsys):
-    folder = retro_folder(tmp_path, findings=[finding(2, feature="F1.2", wontfix="not worth it"),
-                                              finding(3, wontfix="rare")])
-    code, out, err = run(capsys, "validate", str(folder))
-    assert code == 1
-    assert err == "retro.yaml: findings[2]: feature and wontfix are exclusive\n"
+def test_validate_wontfix_and_feature_follow_status(tmp_path, capsys):
+    assert validate_errors(tmp_path, capsys, finding(1, status="wontfix"),
+                           finding(2, wontfix="rare", status="accepted"),
+                           finding(3, wontfix="rare", feature="F1.2"),
+                           finding(4, status="reviewing", feature="F1.2"),
+                           finding(5, status="reviewing"), finding(6, wontfix="rare")) == [
+        "retro.yaml: findings[1].wontfix: missing (the reason, as status is wontfix)",
+        "retro.yaml: findings[2].wontfix: only on a finding whose status is wontfix",
+        "retro.yaml: findings[3].feature: only on an accepted finding",
+        "retro.yaml: findings[4].feature: only on an accepted finding",
+    ]
 
 
-def test_validate_sessions_match(tmp_path, capsys):
-    folder = retro_folder(tmp_path, sources={"sessions": [SID, "s-2"]})
-    (folder / "sessions.yaml").write_text(yaml.safe_dump(SESSIONS + [{"session": "s-3"}]))
-    code, out, err = run(capsys, "validate", str(folder))
-    assert code == 1
-    assert err.splitlines() == ["sessions.yaml: s-2: named in sources.sessions but not digested",
-                                "sessions.yaml: s-3: digested but not in sources.sessions"]
-
-    folder = retro_folder(tmp_path, sources={"sessions": [SID, SID]})
-    (folder / "sessions.yaml").write_text(yaml.safe_dump(SESSIONS + SESSIONS))
+def test_validate_created(tmp_path, capsys):
+    for created in ("2026-11-14T08:39:00-03:00", "2026-11-14T11:39:00Z"):
+        folder = retro_folder(tmp_path, created=created)
+        assert run(capsys, "validate", str(folder))[0] == 0
+    for created in (datetime.date(2026, 11, 14), "2026-11-14 08:39", "today"):
+        folder = retro_folder(tmp_path, created=created)
+        assert run(capsys, "validate", str(folder))[2] == (
+            "retro.yaml: created: must be a date-time with a timezone (2026-11-14T08:39:00-03:00)\n")
+    folder = retro_folder(tmp_path, drop=["created"], date=datetime.date(2026, 11, 14))
     assert run(capsys, "validate", str(folder))[2].splitlines() == [
-        "retro.yaml: sources.sessions: s-1 named twice", "sessions.yaml: s-1: digested twice"]
+        "retro.yaml: created: missing", "retro.yaml: date: replaced by created, a date-time with its timezone"]
 
-    folder = retro_folder(tmp_path, drop=["title"])
-    (folder / "sessions.yaml").write_text("session: s-1\n")
+
+def test_validate_severity_lands_in_status(tmp_path, capsys):
+    assert validate_errors(tmp_path, capsys, finding_without("severity", "status", "lands_in"),
+                           finding(2, severity="critical", status="done", lands_in="")) == [
+        "retro.yaml: findings[1].severity: missing",
+        "retro.yaml: findings[1].status: missing",
+        "retro.yaml: findings[1].lands_in: missing",
+        "retro.yaml: findings[2].severity: must be one of high, medium, low",
+        "retro.yaml: findings[2].status: must be one of reviewing, accepted, wontfix",
+        "retro.yaml: findings[2].lands_in: must be text",
+    ]
+
+
+def test_validate_reads_the_session_through_session_log(tmp_path, capsys, session_log_metrics):
+    folder = retro_folder(tmp_path)
+    assert not (folder / "sessions.yaml").exists()
+    assert run(capsys, "validate", str(folder))[0] == 0
+    assert asked(session_log_metrics) == [SID]
+
+
+def test_validate_session_missing_or_wrong(tmp_path, capsys, session_log_metrics):
+    assert run(capsys, "validate", str(retro_folder(tmp_path, drop=["session"]))) == (
+        1, "", "retro.yaml: session: missing\n")
+    for wrong in (["s-1"], 7, " "):
+        assert run(capsys, "validate", str(retro_folder(tmp_path, session=wrong))) == (
+            1, "", "retro.yaml: session: must be a session id\n")
+    assert asked(session_log_metrics) == []                    # a broken retro.yaml never reaches session-log
+
+
+def test_validate_session_prefix(tmp_path, capsys):
+    folder = retro_folder(tmp_path, session="s-")
+    assert run(capsys, "validate", str(folder)) == (
+        1, "", "retro.yaml: session: s- is not a full session id (session-log has s-1)\n")
+
+
+def test_validate_session_log_error(tmp_path, capsys):
+    for cmd in ("validate", "render"):
+        folder = retro_folder(tmp_path, session="zzz")
+        assert run(capsys, cmd, str(folder)) == (1, "", "retro.yaml: session: no session log matches zzz\n")
+        assert not (folder / "retro.md").exists()
+
+
+def test_validate_old_keys(tmp_path, capsys):
+    folder = retro_folder(tmp_path, sources={"sessions": [SID]}, findings=[finding(1), finding(2, sessions=[SID])])
     assert run(capsys, "validate", str(folder))[2].splitlines() == [
-        "retro.yaml: title: missing", "sessions.yaml: must be a list of digests"]
-    (folder / "sessions.yaml").unlink()
-    assert run(capsys, "validate", str(folder))[2] == "retro.yaml: title: missing\nsessions.yaml: missing\n"
+        "retro.yaml: sources: replaced by session (a retro reads one session)",
+        "retro.yaml: findings[2].sessions: not used (a retro reads one session)"]
 
 
 def test_render_writes_report(tmp_path, capsys):
-    folder = retro_folder(tmp_path, outcome="Roadmap complete.\n", sources={"sessions": [SID, "0123456789"]},
+    folder = retro_folder(tmp_path, outcome="Roadmap complete.\n",
                           findings=[finding(1, what="`python` | missing,\nso it failed.", feature="F1.1"),
                                     finding(2, category="global-agents-md", wontfix="rare"),
                                     finding(3, category="tool-economy")])
-    (folder / "sessions.yaml").write_text(yaml.safe_dump(
-        SESSIONS + [{"session": "0123456789", "project": None, "duration_s": 29, "calls": {"total": 0},
-                     "failures": {}, "search_streaks": [], "cost_usd": None}]))
     (folder / "roadmap.yaml").write_text("milestones: [{id: M1, features: [{id: F1.1}]}]\n")
     (folder / "features" / "F1.1-hook").mkdir(parents=True)
     (folder / "features" / "F1.1-hook" / "feature.yaml").write_text("roadmap: F1.1\nstatus: done\n")
     assert run(capsys, "render", str(folder)) == (0, f"wrote {folder / 'retro.md'}\n", "")
     assert (folder / "retro.md").read_text() == """\
-<!-- Generated by retro.py render from retro.yaml and sessions.yaml: edit those, then render again. -->
-# Retro 2026-11-14: checkers on commit
+<!-- Generated by retro.py render from retro.yaml and its session's session-log file: edit retro.yaml, then render again. -->
+# Retro 2026-11-14 08:39: checkers on commit
 
 Source: Built a hook.
 
 ## Findings
 
-| # | Category | What happened | Fix | Status |
-|---|---|---|---|---|
-| 1 | Automated checks | `python` \\| missing, so it failed. | a hook runs it (F1.1) | fixed |
-| 2 | Global AGENTS.md | python is missing | a hook runs it. Won't fix: rare | wontfix |
-| 3 | Tool economy | python is missing | a hook runs it | open |
+| # | Category | Severity | What happened | Evidence | Fix | Lands in | Status |
+|---|---|---|---|---|---|---|---|
+| 1 | Automated checks | high | `python` \\| missing, so it failed. | #20 | a hook runs it (F1.1) | .githooks/pre-commit | fixed |
+| 2 | Global AGENTS.md | high | python is missing | #20 | a hook runs it. Won't fix: rare | .githooks/pre-commit | wontfix |
+| 3 | Tool economy | high | python is missing | #20 | a hook runs it | .githooks/pre-commit | open |
 
 ## Decisions
 
@@ -343,12 +301,43 @@ Source: Built a hook.
 | Session | Project | Minutes | Calls | Failures | Search streaks | Cost |
 |---|---|---|---|---|---|---|
 | s-1 | repo | 13 | 32 | 3 | 1 | $1.26 |
-| 01234567 | - | 0 | 0 | 0 | 0 | - |
 
 ## Outcome
 
 Roadmap complete.
 """
+
+
+def test_render_evidence_column(tmp_path, capsys):
+    items = [{"call": 12, "excerpt": "x"}, {"call": 3, "excerpt": "x"},
+             {"at": "2026-11-14T10:05:09+01:00", "excerpt": "x"}]
+    folder = retro_folder(tmp_path, findings=[finding(evidence=items, feature="F1.1")])
+    (folder / "roadmap.yaml").write_text("milestones: [{id: M1, features: [{id: F1.1}]}]\n")
+    assert run(capsys, "render", str(folder))[0] == 0
+    assert ("| 1 | Automated checks | high | python is missing | #12, #3, 09:05:09 | a hook runs it (F1.1) "
+            "| .githooks/pre-commit | planned |\n") in (folder / "retro.md").read_text()
+
+
+def test_render_severity_and_lands_in(tmp_path, capsys):
+    folder = retro_folder(tmp_path, findings=[finding(1, severity="low", lands_in="~/.claude/AGENTS.md"),
+                                              finding(2, severity="medium", status="reviewing")])
+    assert run(capsys, "render", str(folder))[0] == 0
+    text = (folder / "retro.md").read_text()
+    assert text.splitlines()[1] == "# Retro 2026-11-14 08:39: checkers on commit"
+    assert ("| # | Category | Severity | What happened | Evidence | Fix | Lands in | Status |\n"
+            "|---|---|---|---|---|---|---|---|\n"
+            "| 1 | Automated checks | low | python is missing | #20 | a hook runs it | ~/.claude/AGENTS.md | open |\n"
+            "| 2 | Automated checks | medium | python is missing | #20 | a hook runs it | .githooks/pre-commit "
+            "| reviewing |\n") in text
+
+
+def test_render_session_without_project_or_cost(tmp_path, capsys, monkeypatch):
+    fake_session_log(tmp_path, monkeypatch, {"session": SID, "project": None, "duration_s": 29,
+                                             "calls": {"total": 20}, "failures": {}, "cost_usd": None})
+    folder = retro_folder(tmp_path)
+    (folder / "roadmap.yaml").write_text("milestones: [{id: M1, features: [{id: F1.1}]}]\n")
+    assert run(capsys, "render", str(folder))[0] == 0
+    assert (folder / "retro.md").read_text().endswith("|---|---|---|---|---|---|---|\n| s-1 | - | 0 | 20 | 0 | 0 | - |\n")
 
 
 def test_render_refuses_invalid(tmp_path, capsys):
@@ -370,9 +359,25 @@ def test_render_strips_folded_decisions(tmp_path, capsys):
     assert "- First, folded.\n- Second.\n" in (folder / "retro.md").read_text()
 
 
+def commands(script):
+    """The subcommands a script's --help lists in its usage line, {a,b,...}."""
+    done = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True, encoding="utf-8")
+    return set(re.search(r"\{([\w,]+)\}", done.stdout).group(1).split(","))
+
+
+def test_skill_md_names_real_commands():
+    scripts = Path(__file__).parent
+    text = (scripts.parent / "SKILL.md").read_text(encoding="utf-8")
+    for script in (scripts / "retro.py", scripts.parents[1] / "session-log" / "scripts" / "sessions.py"):
+        named = set(re.findall(rf"{script.name} (\w+)", text))
+        assert named, script.name
+        assert named <= commands(script), (script.name, named - commands(script))
+    assert "digest" not in text, "SKILL.md still names the removed digest command"
+
+
 def config(tmp_path, **cfg):
     """A config.yaml with a retros folder and one project, changed by cfg (None drops a key)."""
-    data = {"retros": str(tmp_path / "retros"), "projects": ["/work/repo"], "threshold": 10, **cfg}
+    data = {"retros": str(tmp_path / "retros"), "projects": ["/work/repo"], **cfg}
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump({k: v for k, v in data.items() if v is not None}))
     (tmp_path / "retros").mkdir(exist_ok=True)
@@ -400,6 +405,7 @@ def session_log(home, folder, sid, mtime):
 
 def pending(tmp_path, capsys, monkeypatch, current=None, cmd="pending", all_=False):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))  # Path.home() on Windows
     if current:
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", current)
     else:
@@ -413,6 +419,9 @@ def test_pending_lists_project_sessions(tmp_path, capsys, monkeypatch):
     a = session_log(home, "-work-repo", "a", 300)
     b = session_log(home, "-work-repo", "b", 100)
     c = session_log(home, "-work-repo-tasks-x-repos-y", "c", 200)
+    notes = home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(home / "notes")) / "d.jsonl"
+    if os.name == "nt" and len(str(notes)) >= 260:
+        pytest.skip("the temporary home is too deep for a project folder named after it (Windows MAX_PATH)")
     d = session_log(home, re.sub(r"[^A-Za-z0-9]", "-", str(home / "notes")), "d", 400)  # Claude Code's naming
     session_log(home, "-work-repository", "e", 50)
     session_log(home, "-work-other", "f", 50)
@@ -420,14 +429,17 @@ def test_pending_lists_project_sessions(tmp_path, capsys, monkeypatch):
     assert pending(tmp_path, capsys, monkeypatch) == (0, f"{b}\n{c}\n{a}\n{d}\n", "")
 
 
-def test_pending_leaves_out_used_and_current(tmp_path, capsys, monkeypatch):
+def test_pending_leaves_out_used_and_current(tmp_path, capsys, monkeypatch, session_log_metrics):
     config(tmp_path)
-    retro_folder(tmp_path / "retros")                       # its sources name s-1
+    retro_folder(tmp_path / "retros")                       # its session is s-1
     home = tmp_path / "home"
     for n, sid in enumerate(["s-1", "s-2", "s-3"]):
         session_log(home, "-work-repo", sid, 100 + n)
     assert pending(tmp_path, capsys, monkeypatch, current="s-3") == (
         0, f"{home / '.claude/projects/-work-repo/s-2.jsonl'}\n", "")
+    assert pending(tmp_path, capsys, monkeypatch, cmd="due")[0] == 0
+    pending(tmp_path, capsys, monkeypatch, cmd="check")         # fails on the roadmap, after reading retro.yaml
+    assert asked(session_log_metrics) == []                    # pending, due and check never run session-log
 
 
 def test_broken_retro_stops_pending_and_check(tmp_path, capsys, monkeypatch):
@@ -464,7 +476,7 @@ def test_finding_status_from_roadmap(tmp_path, capsys):
 2026-11-14-checkers #3 planned: a hook runs it (F1.3)
 2026-11-14-checkers #4 open: a hook runs it
 2026-11-14-checkers #5 wontfix: a hook runs it. Won't fix: rare
-3 to do; 1 fixed, 1 won't fix
+3 to do; 0 reviewing, 1 fixed, 1 won't fix
 """, "")
 
 
@@ -480,7 +492,7 @@ def test_check_lists_to_do(tmp_path, capsys):
 2026-11-14-checkers #2 planned: a hook runs it (F1.2)
 2026-11-14-checkers #3 planned: a hook runs it (F1.3)
 2026-11-14-checkers #4 open: a hook runs it
-3 to do; 1 fixed, 1 won't fix
+3 to do; 0 reviewing, 1 fixed, 1 won't fix
 """, "")
 
 
@@ -493,9 +505,21 @@ def test_check_one_retro(tmp_path, capsys):
 2026-11-14-checkers #2 planned: a hook runs it (F1.2)
 2026-11-14-checkers #3 planned: a hook runs it (F1.3)
 2026-11-14-checkers #4 open: a hook runs it
-3 to do; 1 fixed, 1 won't fix
+3 to do; 0 reviewing, 1 fixed, 1 won't fix
 """, "")
     assert run(capsys, "check", str(other))[0] == 1
+
+
+def test_check_reviewing_is_not_to_do(tmp_path, capsys):
+    planned_retro(tmp_path, [finding(1, status="reviewing"), finding(2, status="reviewing", severity="low"),
+                             finding(3, fix="a hook\nruns it\n"), finding(4, feature="F1.1")])
+    cfg = str(tmp_path / "config.yaml")
+    assert run(capsys, "--config", cfg, "check") == (0, """\
+2026-11-14-checkers #3 open: a hook runs it
+1 to do; 2 reviewing, 1 fixed, 0 won't fix
+""", "")
+    assert run(capsys, "--config", cfg, "check", "--all")[1].splitlines()[:2] == [
+        "2026-11-14-checkers #1 reviewing: a hook runs it", "2026-11-14-checkers #2 reviewing: a hook runs it"]
 
 
 def test_render_refuses_feature_not_in_roadmap(tmp_path, capsys):
@@ -534,18 +558,40 @@ def due(tmp_path, capsys, monkeypatch):
     return pending(tmp_path, capsys, monkeypatch, cmd="due")
 
 
-def test_due_at_threshold(tmp_path, capsys, monkeypatch):
-    config(tmp_path, threshold=2)
-    session_log(tmp_path / "home", "-work-repo", "s-1", 100)
+def test_due_counts_today_unread_worth(tmp_path, capsys, monkeypatch):
+    config(tmp_path)
+    verdicts(tmp_path, TODAY, b="worth", a="worth", c="worth")
+    assert due(tmp_path, capsys, monkeypatch) == (0, "3 b\n", "")
+
+
+def test_due_leaves_out_skip_read_current_and_other_days(tmp_path, capsys, monkeypatch):
+    config(tmp_path)
+    retro_folder(tmp_path / "retros", session="b")
+    verdicts(tmp_path, TODAY, a="skip", b="worth", cur="worth", d="worth", e="worth")
+    verdicts(tmp_path, "2020-01-01", old="worth")
+    assert pending(tmp_path, capsys, monkeypatch, current="cur", cmd="due") == (0, "2 d\n", "")
+
+
+def test_due_nothing_today(tmp_path, capsys, monkeypatch):
+    config(tmp_path)
+    verdicts(tmp_path, "2020-01-01", old="worth")
     assert due(tmp_path, capsys, monkeypatch) == (0, "", "")
-    session_log(tmp_path / "home", "-work-repo", "s-2", 200)
-    assert due(tmp_path, capsys, monkeypatch) == (0, "2\n", "")
+    verdicts(tmp_path, TODAY, a="skip")
+    assert due(tmp_path, capsys, monkeypatch) == (0, "", "")
 
 
-def test_due_threshold_missing_or_wrong(tmp_path, capsys, monkeypatch):
-    for value, problem in ((None, "missing"), (0, "must be a positive whole number")):
-        path = config(tmp_path, threshold=value)
-        assert due(tmp_path, capsys, monkeypatch) == (1, "", f"{path}: threshold: {problem}; see config.example.yaml\n")
+def test_due_ignores_broken_other_day(tmp_path, capsys, monkeypatch):
+    config(tmp_path)
+    verdicts(tmp_path, "2020-01-01").write_text("[")
+    verdicts(tmp_path, TODAY, a="worth")
+    assert due(tmp_path, capsys, monkeypatch) == (0, "1 a\n", "")
+
+
+def test_due_threshold_not_needed(tmp_path, capsys, monkeypatch):
+    for value in (None, 10, "ten"):
+        config(tmp_path, threshold=value)
+        verdicts(tmp_path, TODAY, a="worth")
+        assert due(tmp_path, capsys, monkeypatch) == (0, "1 a\n", ""), value
 
 
 LIMITS = {"failures": 4, "repeats": 1, "search_streaks": 2, "compactions": 1, "interruptions": 1,
@@ -618,6 +664,17 @@ def test_triage_skip_clean_and_small(tmp_path, capsys):
         ("clean", "skip", []), ("small", "skip", ["calls 9 < 10"])]
 
 
+def test_triage_skips_retro_session(tmp_path, capsys):
+    triage_config(tmp_path)
+    retro_run = session_file(tmp_path, "retro", start_skill={"name": "retro-report", "args": "abc"},
+                             failures={"other": [{}] * 9}, compactions=[{}] * 3)
+    small = session_file(tmp_path, "small", start_skill={"name": "retro-report"}, calls={"total": 2})
+    later = session_file(tmp_path, "later", start_skill={"name": "task"}, skills={"retro-report": 1},
+                         compactions=[{}] * 3)
+    assert triage(tmp_path, capsys, retro_run, small, later)[1] == (
+        "retro skip: retro session\nsmall skip: retro session\nlater worth: compactions 3 >= 1\n")
+
+
 def test_triage_null_cost_and_absent_rule(tmp_path, capsys):
     limits = {k: v for k, v in LIMITS.items() if k != "repeats"}
     triage_config(tmp_path, triage={"min_calls": 10, "limits": limits})
@@ -625,9 +682,9 @@ def test_triage_null_cost_and_absent_rule(tmp_path, capsys):
     assert triage(tmp_path, capsys, s) == (0, "s-1 skip\n", "")
 
 
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="the local time zone cannot be changed here (Windows)")
 def test_triage_day_file_replaces_entry(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("TZ", "Pacific/Kiritimati")          # UTC+14: 10:01Z on the 14th is the 15th locally
-    import time
     time.tzset()
     triage_config(tmp_path)
     a = session_file(tmp_path, "a")
@@ -881,7 +938,7 @@ def verdicts(tmp_path, day="2026-11-14", **by_session):
 
 
 def judged_logs(tmp_path):
-    config(tmp_path, threshold=2)
+    config(tmp_path)
     home = tmp_path / "home"
     logs = {sid: session_log(home, "-work-repo", sid, 100 + n) for n, sid in enumerate(["a", "b", "c", "d"])}
     verdicts(tmp_path, a="skip", b="worth")
@@ -892,7 +949,6 @@ def judged_logs(tmp_path):
 def test_pending_leaves_out_skipped(tmp_path, capsys, monkeypatch):
     logs = judged_logs(tmp_path)
     assert pending(tmp_path, capsys, monkeypatch) == (0, f"{logs['b']}\n{logs['d']}\n", "")
-    assert pending(tmp_path, capsys, monkeypatch, cmd="due") == (0, "2\n", "")
 
 
 def test_pending_all_lists_skipped(tmp_path, capsys, monkeypatch):
@@ -904,7 +960,7 @@ def test_pending_all_lists_skipped(tmp_path, capsys, monkeypatch):
 def test_broken_day_file_stops_pending_and_due(tmp_path, capsys, monkeypatch):
     config(tmp_path)
     session_log(tmp_path / "home", "-work-repo", "a", 100)
-    day = verdicts(tmp_path)
+    day = verdicts(tmp_path, TODAY)
     for text, problem in [("[", "not valid YAML"), ("session: a\n", "not a list of triage entries")]:
         day.write_text(text)
         for cmd in ("pending", "due"):
@@ -934,13 +990,156 @@ def test_unreadable_and_several_broken_day_files(tmp_path, capsys, monkeypatch):
     broken.write_text("[")
     unreadable = tmp_path / "retros" / "triage" / "2026-11-15-triage.yaml"
     unreadable.mkdir()                                          # reading it raises an OSError
-    for cmd in ("pending", "due"):
-        code, out, err = pending(tmp_path, capsys, monkeypatch, cmd=cmd)
-        assert (code, out) == (1, ""), cmd
-        lines = err.splitlines()
-        assert len(lines) == 2 and lines[0].startswith(f"{broken}: not valid YAML")
-        assert lines[1].startswith(f"{unreadable}: cannot read: ")
+    code, out, err = pending(tmp_path, capsys, monkeypatch)
+    assert (code, out) == (1, "")
+    lines = err.splitlines()
+    assert len(lines) == 2 and lines[0].startswith(f"{broken}: not valid YAML")
+    assert lines[1].startswith(f"{unreadable}: cannot read: ")
     assert pending(tmp_path, capsys, monkeypatch, all_=True)[0] == 0
+    assert due(tmp_path, capsys, monkeypatch) == (0, "", "")    # neither is today's
+    today = tmp_path / "retros" / "triage" / f"{TODAY}-triage.yaml"
+    today.mkdir()
+    code, out, err = due(tmp_path, capsys, monkeypatch)
+    assert (code, out) == (1, "") and err.startswith(f"{today}: cannot read: ") and len(err.splitlines()) == 1
+
+
+FAKE_SESSIONS_PY = '''import sys
+from pathlib import Path
+out = Path(__file__).parent / "out"
+name = sys.argv[2]
+if sys.argv[1] == "transcript":
+    if name.startswith("bad"):
+        sys.exit(print("cannot read the log of " + name, file=sys.stderr) or 1)
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.exit(print("#1 Bash: ls (" + name + ") relatório"))
+assert sys.argv[1] == "extract" and sys.argv[3:] == ["--print-path"], sys.argv
+(out.parent / "calls.txt").open("a").write(name + "\\n")
+ids = sorted(p.stem for p in out.glob(name + "*.yaml"))
+if not ids:
+    sys.exit(print("no session log matches " + name, file=sys.stderr) or 1)
+if len(ids) > 1:
+    sys.exit(print("ambiguous " + name + ": " + ", ".join(ids), file=sys.stderr) or 1)
+print(out / (ids[0] + ".yaml"))
+'''
+
+
+def fake_session_log(tmp_path, monkeypatch, *metrics):
+    """Stands in for session-log's sessions.py: extract <id-or-prefix> --print-path resolves among the metrics
+    files written here, prints the path or session-log's error line, and logs each name it was asked for."""
+    root = tmp_path / "session-log"
+    (root / "out").mkdir(parents=True, exist_ok=True)
+    for m in metrics:
+        (root / "out" / f"{m['session']}.yaml").write_text(yaml.safe_dump(m, sort_keys=False))
+    script = root / "sessions.py"
+    script.write_text(FAKE_SESSIONS_PY, encoding="utf-8")
+    monkeypatch.setattr(retro, "SESSION_LOG", script)
+    return root
+
+
+@pytest.fixture(autouse=True)
+def session_log_metrics(tmp_path, monkeypatch):
+    """Every test reaches a fake session-log that knows the session of SESSIONS."""
+    return fake_session_log(tmp_path, monkeypatch, *SESSIONS)
+
+
+def asked(root):
+    """The names the fake session-log was asked for, in order."""
+    calls = root / "calls.txt"
+    return calls.read_text().split() if calls.is_file() else []
+
+
+def session(tmp_path, capsys, *argv):
+    return run(capsys, "--config", str(config(tmp_path)), "session", *argv)
+
+
+def test_session_current(tmp_path, capsys, monkeypatch):
+    root = fake_session_log(tmp_path, monkeypatch, *SESSIONS)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SID)
+    folder = tmp_path / "retros" / f"{TODAY}-s-1"
+    assert session(tmp_path, capsys) == (0, f"{root / 'out' / 's-1.yaml'}\n{folder}\n", "")
+    assert asked(root) == [SID]
+
+
+def test_session_named_id_or_prefix(tmp_path, capsys, monkeypatch):
+    root = fake_session_log(tmp_path, monkeypatch, {"session": "abc-123"}, {"session": "def-456"})
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "def-456")
+    for name in ("abc-123", "abc"):
+        assert session(tmp_path, capsys, name)[1].splitlines()[0] == str(root / "out" / "abc-123.yaml")
+
+
+def test_session_none_outside_claude(tmp_path, capsys, monkeypatch):
+    root = fake_session_log(tmp_path, monkeypatch, *SESSIONS)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    assert session(tmp_path, capsys) == (1, "", "no session: name one, or run inside a Claude Code session\n")
+    assert asked(root) == []
+
+
+def test_session_log_error_passes_through(tmp_path, capsys, monkeypatch):
+    fake_session_log(tmp_path, monkeypatch, {"session": "abc-1"}, {"session": "abc-2"})
+    assert session(tmp_path, capsys, "zzz") == (1, "", "no session log matches zzz\n")
+    assert session(tmp_path, capsys, "abc") == (1, "", "ambiguous abc: abc-1, abc-2\n")
+    assert list((tmp_path / "retros").iterdir()) == []
+
+
+def test_session_opens_folder_with_transcript(tmp_path, capsys, monkeypatch):
+    fake_session_log(tmp_path, monkeypatch, {"session": "abc-123456789", "title": "Retro-report com relatório YAML"},
+                     {"session": "bad-1", "title": "x"})
+    retros = tmp_path / "retros"
+    folder = retros / f"{TODAY}-retro-report-com-relatorio-yaml"
+    code, out, err = session(tmp_path, capsys, "abc")
+    assert (code, out.splitlines()[1], err) == (0, str(folder), "")
+    assert (folder / "transcript.txt").read_text(encoding="utf-8") == "#1 Bash: ls (abc-123456789) relatório\n"
+    assert session(tmp_path, capsys, "abc")[1].splitlines()[1] == str(folder)      # run again: the same folder
+
+    named = retro_folder(retros, session="abc-123456789")            # a retro naming the session is reused
+    (folder / "transcript.txt").unlink()
+    assert session(tmp_path, capsys, "abc")[1].splitlines()[1] == str(named)
+    assert (named / "transcript.txt").is_file()
+
+    assert session(tmp_path, capsys, "bad") == (1, "", "cannot read the log of bad-1\n")
+    assert not (retros / f"{TODAY}-x").exists()
+
+
+def test_session_refuses_retro_session(tmp_path, capsys, monkeypatch):
+    fake_session_log(tmp_path, monkeypatch,
+                     {"session": "rr-1", "title": "Retro", "start_skill": {"name": "retro-report"}})
+    assert session(tmp_path, capsys, "rr") == (
+        1, "", "rr-1 started with /retro-report: a retro session; run again with --anyway to read it\n")
+    assert list((tmp_path / "retros").iterdir()) == []
+    code, out, err = session(tmp_path, capsys, "rr", "--anyway")
+    assert (code, out.splitlines()[1], err) == (0, str(tmp_path / "retros" / f"{TODAY}-retro"), "")
+    assert (tmp_path / "retros" / f"{TODAY}-retro" / "transcript.txt").is_file()
+
+
+def test_session_needs_config(tmp_path, capsys, monkeypatch):
+    path = config(tmp_path, retros=None)
+    assert run(capsys, "--config", str(path), "session", SID) == (
+        1, "", f"{path}: retros: missing; see config.example.yaml\n")
+
+
+def test_slug():
+    assert retro.slug("Retro-report com relatório YAML") == "retro-report-com-relatorio-yaml"
+    assert retro.slug("  ") == "" and retro.slug(None) == ""
+    assert retro.slug("word " * 30) == "-".join(["word"] * 10)
+    assert retro.slug("a" * 80) == "a" * 50
+
+
+def test_no_digest_left(capsys):
+    for name in ("digest", "read_records", "calls", "failures", "repeats", "search_streaks", "tokens", "cost_usd",
+                 "subagents", "NotASessionLog"):
+        assert not hasattr(retro, name), name
+    code, out, err = run_exit(capsys, "digest", "x.jsonl")
+    assert code == 2 and "invalid choice: 'digest'" in err
+
+
+def run_exit(capsys, *argv):
+    """run for a command argparse refuses: its exit code and output."""
+    try:
+        retro.main(list(argv))
+    except SystemExit as e:
+        out, err = capsys.readouterr()
+        return e.code, out, err
+    raise AssertionError("argparse accepted " + " ".join(argv))
 
 
 def test_odd_session_ids_in_a_day_file(tmp_path, capsys, monkeypatch):

@@ -4,8 +4,6 @@ retros: ~/Projects/home/retros
 # projects: the folders whose Claude Code sessions a retro reads; each covers its subfolders (task worktrees).
 projects:
   - ~/Projects/home
-# threshold: pending sessions that make the band offer a retro.
-threshold: 10
 # triage: judges each session as it ends (retro.py triage), so retros read only the sessions worth one.
 # Below min_calls a session is skipped; above it, it is worth a retro when any rule reaches its limit.
 # Rules: failures (all classes), repeats, search_streaks, compactions, interruptions, denials, api_errors,
