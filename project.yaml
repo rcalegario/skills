@@ -11,19 +11,25 @@ stack:
   format: SKILL.md
   test: pytest
   hook: git-pre-commit
+  dashboard: python http.server + js
 entities:
   - skill
   - installed_skill
   - credit
+  - tool
 features:
   - skills-proprias-flow-task-idea-triage
   - origens-fixadas-das-skills-instaladas
   - validacao-do-skills-yaml
   - creditos-gerados-no-readme
   - instalacao-por-npx-skills
-  - pre-commit-com-teste-por-skill
+  - pre-commit-paralelo-so-com-as-suites-afetadas
   - revisao-de-codigo-em-dois-eixos-gravada-no-review-yaml
+  - lib-compartilhada-com-git-falso-nos-testes
+  - retro-de-uma-sessao-lida-inteira
+  - painel-web-local-das-tasks
 notes: |
   Repo público rcalegario/skills, licença MIT. skills.yaml é a fonte: own (nome, teste, referências) e installed (repo, caminho, commit fixado); scripts/skills.py valida e gera os créditos.
+  lib/ guarda os helpers genéricos (YAML, git, grafos) que as skills compartilham; tools/ guarda ferramentas que não são skills, hoje o task-dashboard, uma página local só de leitura das pastas do /task.
   Instalação nesta máquina por symlinks em ~/.claude/skills (SETUP.md), sem skills-manager. As skills task e idea-triage leem o home de um config.yaml local ignorado pelo git.
   intent e domain são palpite.
