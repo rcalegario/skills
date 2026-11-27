@@ -64,7 +64,7 @@ When the caller passed `--feature <folder>` (with the `--root` and `--specs` of 
   ```
 
   Each value comes from the finding's line as the sub-agent wrote it (`reference/findings.md`); `--line` is left out when the file is `-`. Give no `--action`: the outcome is the caller's to decide.
-- When both axes ran and neither has a finding, run `finding <feature> --none` once instead. When the Spec axis was skipped, record only the Standards findings (no `--none`), and say in the report that the spec part was not reviewed.
+- When both axes ran and neither has a finding, run `finding <feature> --none --axes spec,standards` once instead. When the Spec axis was skipped, record only the Standards findings (no `--none`), and say in the report that the spec part was not reviewed.
 - When a call exits non-zero, stop recording, and report the command, its output and the findings left unrecorded under the summary: `review.yaml` then holds only the findings before it.
 
 End the report with the ids `flow.py` printed (`R-1`..`R-n`, or "clean review recorded").
