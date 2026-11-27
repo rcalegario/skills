@@ -21,11 +21,11 @@ Every status change, the roadmap approval and the feature skeleton go through th
 | After any hand edit | `check <feature>` |
 | The user approved (M: spec and tasks; L: each in its turn) | `approve <feature> spec`, then for L `approve <feature> tasks` |
 | Starting a task | `set <feature> T<n> doing` |
-| The task's commit is made | `set <feature> T<n> verifying` (records `HEAD`; `--commit <sha>` on resume) |
+| The task's commit is made | `set <feature> T<n> verifying` (records `HEAD`, refused when its subject is not the task's `commit`; `--commit <sha>` on resume or for an earlier commit) |
 | A criterion's checks ran | `set <feature> AC<n> pass\|fail`: a task turns `done` when every check of the criteria it covers passes, and goes back to `verifying` when one fails |
 | A review finding | `finding <feature> --text T --source S [--severity --confidence --file --line --hunk --fix]`: appended to `review.yaml` as the next `R-n`, with no outcome yet. Add `--action fix --task T<n>` or `--action wontfix --reason R` when the outcome is already known. `S` is `spec-review`, `standards-review`, `correctness-review`, `tests-review`, `security-review`, `pr-comment` (add `--comment-id N`, the GitHub comment id) or `user` |
 | The outcome of a finding | `finding <feature> R-n --action fix --task T<n>` or `--action wontfix --reason R` (replaces an earlier outcome) |
-| A clean review | `finding <feature> --none` (`findings: []`) |
+| A clean review, after the review ran | `finding <feature> --none --axes spec,standards` (`findings: []`; M and L need both axes) |
 | The feature's PR is open | `pr <feature> --url U` |
 | Every task committed (`verifying` or `done`) | `review <feature>` |
 | Every check `pass` and every finding in `review.yaml` has an outcome | `finish <feature>` |
@@ -100,7 +100,7 @@ Say which signal fired, then suggest, in this order: (1) **split** into features
 
 3. Ask the user's decisions in one round (L: in rounds, each round asking every question whose prerequisites are settled), in the **question** format.
    Turn vague words into concrete ones ("fast" → "under 1 s for 1,000 rows"). Write each answer into its file in the turn it arrives: a criterion, an `Out of scope` line, or a `Notes` entry.
-4. Run `flow.py new <feature> ...`: it creates `.specs/features/<feature>/` with `spec.md` (from `<skill-dir>/templates/spec.md`) and a draft `feature.yaml` (schema below) that you then fill. `spec.md` is the prose for people; everything the script checks lives in `feature.yaml`. Each fact lives in one of them, never both.
+4. Run `flow.py new <feature> ...`: it creates `.specs/features/<feature>/` with `spec.md` (from `<skill-dir>/templates/spec.md`) and a draft `feature.yaml` (schema below) that you then fill: each empty list carries a commented example of one item with every required field. `spec.md` is the prose for people; everything the script checks lives in `feature.yaml`. Each fact lives in one of them, never both.
 5. Write the criteria (below). Re-read the request sentence by sentence: each sentence lands on a criterion, an `Out of scope` line, or a question.
 6. Write the tasks and checks (below). For L, only after the spec is approved.
 7. **Grill by size.** M: when the draft passes `check`, offer once: "Want me to grill this spec first?" and run the `grilling` skill on a yes. L: run `grilling` before presenting. Bound it to this feature's behaviour and scope; the architecture is `design.md`'s job.
@@ -124,6 +124,7 @@ Each criterion is one line with one observable outcome, in one of four shapes:
 - One outcome per criterion; two behaviours are two criteria.
 - Concrete values: the exact message, the status code, the limit.
 - For each WHEN, ask what the IF is: the error, the empty case, the duplicate. That is the criterion most often missing.
+- A criterion that exists to save time (a skip, a cache, a check before the work) names the measurement showing the step it saves costs more than its check. Without one, a spike task measures it first (see **Riskiest first**), or the criterion is dropped.
 
 ### Tasks
 
@@ -203,7 +204,8 @@ The review lives beside `feature.yaml`, in `review.yaml`, filled at CLOSE and wr
 base: abc1234                  # the feature's base, stamped when the file is created
 head: def5678                  # HEAD when the file is created
 created: 2026-11-12
-findings:                      # [] for a clean review (`finding --none`)
+axes: [spec, standards]        # only on a clean review: the axes that ran (`finding --none --axes`)
+findings:                      # [] for a clean review (`finding --none --axes spec,standards`)
   - id: R-1                    # assigned by the script
     text: "AC2 test does not cover a quote inside a value"
     source: spec-review        # spec-review | standards-review | correctness-review | tests-review | security-review | pr-comment | user
@@ -260,7 +262,7 @@ M and L:
    - **Spec**: criteria missing or partial, behaviour nobody asked for, criteria that look implemented but wrong. The spec is `spec.md` plus `feature.yaml`.
    - **Standards**: breaches of the project's documented standards (its `CLAUDE.md` / `AGENTS.md` files and coding-standards docs).
 
-   Invoke the `code-review` skill with `base`, the paths to `spec.md` and `feature.yaml`, and `--feature <feature> --root <root> --specs <specs>` (the same values as your `flow.py` calls) when it is available: it records every finding in `review.yaml` itself, or a clean review. Otherwise dispatch two sub-agents in parallel, one per axis, each given the diff command and its sources, each reporting in under 400 words with a quote or `file:line` per finding, and record each finding yourself with `flow.py finding <feature> --text T --source S ...` (its severity, file, line, hunk and fix when the review gave them), or `finding <feature> --none` when both axes are clean.
+   Invoke the `code-review` skill with `base`, the paths to `spec.md` and `feature.yaml`, and `--feature <feature> --root <root> --specs <specs>` (the same values as your `flow.py` calls) when it is available: it records every finding in `review.yaml` itself, or a clean review. Otherwise dispatch two sub-agents in parallel, one per axis, each given the diff command and its sources, each reporting in under 400 words with a quote or `file:line` per finding, and record each finding yourself with `flow.py finding <feature> --text T --source S ...` (its severity, file, line, hunk and fix when the review gave them), or `finding <feature> --none --axes spec,standards` when both axes ran and are clean. Never record a clean review for an axis that did not run.
 4. Comments left on the PR are findings too: read them (`gh api repos/<owner>/<repo>/pulls/<n>/comments`, and `issues/<n>/comments` for general ones), and record each with `--source pr-comment --comment-id <id>`. Then give each finding its outcome with `finding <feature> R-n --action fix --task T<n>` or `--action wontfix --reason R`: a `fix` adds a task first (same BUILD loop); a `wontfix` carries a `reason` the user agreed to (**question** format). One round: after the fixes, run the suite again, and there is no second review.
 5. **Manual checks.** Present the `manual` checks in the **checklist** format, and wait. Record each one with `set <feature> AC<n> pass|fail` as the user reports. A `fail` is fixed (a task, same loop) and checked again.
 6. `finish <feature>`: it refuses while a task is not `done`, a check is not `pass`, `review.yaml` is missing, or a finding has no outcome.

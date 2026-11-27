@@ -1,5 +1,7 @@
 """Tests for flow.py. Run: python -m pytest <skill-dir>/scripts -q"""
 import os
+import re
+import shutil
 import subprocess
 import sys
 
@@ -10,6 +12,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import flow  # noqa: E402
+from lib import fakegit, gitutil  # noqa: E402  (flow.py puts the repo root on the path)
 
 FEATURE = """\
 id: demo
@@ -54,8 +57,9 @@ SPEC = "# Demo feature\n\n## Problem\n\nSomething hurts.\n"
 
 
 def git(root, *args):
-    subprocess.run(["git"] + list(args), cwd=str(root), check=True,
-                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    """Real git, with the identity on the command line: no test runs `git config`."""
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com"] + list(args),
+                   cwd=str(root), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def write_feature(folder, text=FEATURE, spec=SPEC):
@@ -65,24 +69,77 @@ def write_feature(folder, text=FEATURE, spec=SPEC):
         (folder / "spec.md").write_text(spec)
 
 
+# The fake git of the running test, which init_repo and commit_in build history in.
+INSTALLED = {"fake": None}
+
+
 @pytest.fixture
-def repo(tmp_path):
-    git(tmp_path, "init", "-q")
-    git(tmp_path, "config", "user.email", "t@example.com")
-    git(tmp_path, "config", "user.name", "t")
-    (tmp_path / ".gitignore").write_text(".specs/\n")
-    (tmp_path / "code.txt").write_text("v1\n")
-    git(tmp_path, "add", ".")
-    git(tmp_path, "commit", "-qm", "init")
+def fake(monkeypatch):
+    """A fake git behind lib/gitutil.py (TESTING.md): no test process starts git."""
+    fake = fakegit.install(monkeypatch)
+    monkeypatch.setitem(INSTALLED, "fake", fake)
+    return fake
+
+
+def write_files(root, files):
+    for name, content in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(content)
+
+
+def init_repo(root, files):
+    """A fake repository at `root` tracking `files` ({path: content}), with one commit."""
+    write_files(root, files)
+    INSTALLED["fake"].init(root, list(files))
+
+
+# Files of the one real repository the tests that check git itself copy (TESTING.md).
+REAL_FILES = {"code.txt": "v1\n", "f.txt": "v1\n", "tasks/mine/notes.md": "v1\n",
+              "tasks/other/notes.md": "v1\n", "todo.md": "v1\n"}
+
+
+@pytest.fixture(scope="session")
+def real_template(tmp_path_factory):
+    """A real git repository built once per session, holding REAL_FILES in one commit."""
+    root = tmp_path_factory.mktemp("real-template")
+    write_files(root, REAL_FILES)
+    git(root, "init", "-q")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "init")
+    return root
+
+
+@pytest.fixture
+def real_copy(real_template, tmp_path_factory):
+    """`real_copy()` is a new copy of the session's real repository."""
+    def copy():
+        root = tmp_path_factory.mktemp("real")
+        shutil.copytree(str(real_template), str(root), dirs_exist_ok=True)
+        return root
+    return copy
+
+
+@pytest.fixture
+def repo(tmp_path, fake):
+    init_repo(tmp_path, {".gitignore": ".specs/\n", "code.txt": "v1\n"})
     write_feature(tmp_path / ".specs" / "features" / "demo")
     return tmp_path
 
 
-def commit(root, content):
-    (root / "code.txt").write_text(content)
-    git(root, "commit", "-qam", "change %s" % content.strip())
-    return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(root),
-                          stdout=subprocess.PIPE, universal_newlines=True).stdout.strip()
+@pytest.fixture
+def real_repo(real_copy):
+    """`repo` on a copy of the real repository, for a test that checks git itself."""
+    root = real_copy()
+    write_feature(root / ".specs" / "features" / "demo")
+    return root
+
+
+SUBJECTS = {"T1": "feat: do the first thing", "T2": "feat: do the second thing"}
+
+
+def commit(root, content, task="T1"):
+    """Commit a change with the subject of the task it delivers (FEATURE's commit message)."""
+    return commit_in(root, "code.txt", content, SUBJECTS[task])
 
 
 def run(root, *args):
@@ -166,7 +223,7 @@ def test_check_rejects_finding_without_task_or_reason(repo, capsys):
 def test_done_status_needs_every_check_passed(repo, capsys):
     sha1 = commit(repo, "a\n")
     assert run(repo, "set", "demo", "T1", "verifying") == 0
-    commit(repo, "b\n")
+    commit(repo, "b\n", "T2")
     assert run(repo, "set", "demo", "T2", "verifying") == 0
     text = feature(repo).read_text().replace("status: building", "status: done") + "review:\n  findings: []\n"
     code, out = check_output(repo, capsys, text)
@@ -184,8 +241,7 @@ DRAFT_M = FEATURE.replace("status: approved   # keep this comment", "status: dra
 
 
 def head(root):
-    return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(root),
-                          stdout=subprocess.PIPE, universal_newlines=True).stdout.strip()
+    return gitutil.head_sha(str(root))
 
 
 def test_approve_m_spec_approves_both_and_records_base(repo):
@@ -254,6 +310,17 @@ def test_set_verifying_records_head_keeps_comments_and_moves_to_building(repo):
     assert run(repo, "check", "demo") == 0
 
 
+def test_set_verifying_refuses_a_head_of_another_subject(repo, capsys):
+    sha = commit(repo, "v2\n", "T2")
+    capsys.readouterr()
+    assert run(repo, "set", "demo", "T1", "verifying") == 1
+    out = capsys.readouterr().out
+    assert "feat: do the second thing" in out and "feat: do the first thing" in out
+    assert "--commit <sha>" in out
+    assert data(repo)["tasks"][0]["status"] == "todo"
+    assert run(repo, "set", "demo", "T1", "verifying", "--commit", sha) == 0
+
+
 def test_set_verifying_quotes_the_sha_so_yaml_keeps_it_a_string(repo):
     sha = commit(repo, "v2\n")
     assert run(repo, "set", "demo", "T1", "verifying") == 0
@@ -301,12 +368,7 @@ def test_set_rejects_unknown_target_or_value(repo):
 
 def test_task_repo_records_and_validates_the_commit_in_that_repo(repo, tmp_path_factory):
     other = tmp_path_factory.mktemp("other")
-    git(other, "init", "-q")
-    git(other, "config", "user.email", "t@example.com")
-    git(other, "config", "user.name", "t")
-    (other / "f.txt").write_text("v1\n")
-    git(other, "add", ".")
-    git(other, "commit", "-qm", "other init")
+    init_repo(other, {"f.txt": "v1\n"})
     other_sha = commit_in(other, "f.txt", "v2\n")
     commit(repo, "v2\n")
     assert run(repo, "set", "demo", "T1", "verifying") == 0
@@ -318,11 +380,44 @@ def test_task_repo_records_and_validates_the_commit_in_that_repo(repo, tmp_path_
     assert run(repo, "check", "demo") == 0
 
 
-def commit_in(root, name, content):
+def give_t1_repo(root, repo_path):
+    text = feature(root).read_text().replace(
+        "    covers: [AC1]\n", "    covers: [AC1]\n    repo: %s\n" % repo_path, 1)
+    feature(root).write_text(text)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Git Bash paths exist only on Windows")
+def test_task_repo_accepts_a_git_bash_path(real_repo, real_copy):
+    other = real_copy()
+    other_sha = real_commit(other, "f.txt", "v2\n", SUBJECTS["T1"])
+    drive, rest = os.path.splitdrive(str(other))
+    give_t1_repo(real_repo, "/%s%s" % (drive[0].lower(), rest.replace("\\", "/")))
+    assert run(real_repo, "set", "demo", "T1", "verifying") == 0
+    assert str(data(real_repo)["tasks"][0]["sha"]) == other_sha
+    assert run(real_repo, "check", "demo") == 0
+
+
+def test_task_repo_that_is_not_a_directory_is_named(repo, tmp_path, capsys):
+    missing = (tmp_path / "no-such-repo").as_posix()
+    give_t1_repo(repo, missing)
+    capsys.readouterr()
+    assert run(repo, "check", "demo") == 1
+    assert "T1 repo %s is not a directory" % missing in capsys.readouterr().out
+    assert run(repo, "set", "demo", "T1", "verifying") == 1
+    assert "T1 repo %s is not a directory" % missing in capsys.readouterr().out
+
+
+def commit_in(root, name, content, message="change"):
+    """Commit a change to a tracked file in the fake; return the short sha."""
     (root / name).write_text(content)
-    git(root, "commit", "-qam", "change")
-    return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(root),
-                          stdout=subprocess.PIPE, universal_newlines=True).stdout.strip()
+    return INSTALLED["fake"].commit(root, message)
+
+
+def real_commit(root, name, content, message):
+    """Commit a change to a tracked file with real git; return the short sha."""
+    (root / name).write_text(content)
+    git(root, "commit", "-qam", message)
+    return head(root)
 
 
 # ---------------------------------------------------------------- set check
@@ -330,7 +425,7 @@ def commit_in(root, name, content):
 def build_all(root):
     commit(root, "a\n")
     assert run(root, "set", "demo", "T1", "verifying") == 0
-    commit(root, "b\n")
+    commit(root, "b\n", "T2")
     assert run(root, "set", "demo", "T2", "verifying") == 0
 
 
@@ -357,7 +452,7 @@ def test_review_needs_every_task_verified(repo):
     commit(repo, "a\n")
     assert run(repo, "set", "demo", "T1", "verifying") == 0
     assert run(repo, "review", "demo") == 1       # T2 is still todo
-    commit(repo, "b\n")
+    commit(repo, "b\n", "T2")
     assert run(repo, "set", "demo", "T2", "verifying") == 0
     assert run(repo, "review", "demo") == 0
     assert data(repo)["status"] == "review"
@@ -492,16 +587,11 @@ def test_status_lists_frontier(repo, capsys):
 
 
 @pytest.fixture
-def split(tmp_path):
+def split(tmp_path, fake):
     """A git repo for the code and a specs folder outside it."""
     code = tmp_path / "code"
     code.mkdir()
-    git(code, "init", "-q")
-    git(code, "config", "user.email", "t@example.com")
-    git(code, "config", "user.name", "t")
-    (code / "code.txt").write_text("v1\n")
-    git(code, "add", ".")
-    git(code, "commit", "-qm", "init")
+    init_repo(code, {"code.txt": "v1\n"})
     specs = tmp_path / "task" / ".specs"
     write_feature(specs / "features" / "demo")
     return code, specs
@@ -535,36 +625,22 @@ def test_specs_outside_root_reads_its_roadmap(split, capsys):
     assert "done      F1.1" in capsys.readouterr().out
 
 
-def test_untracked_specs_inside_root_do_not_block_done(tmp_path):
-    git(tmp_path, "init", "-q")
-    git(tmp_path, "config", "user.email", "t@example.com")
-    git(tmp_path, "config", "user.name", "t")
-    (tmp_path / "code.txt").write_text("v1\n")
-    git(tmp_path, "add", ".")
-    git(tmp_path, "commit", "-qm", "init")
-    specs = tmp_path / "notes" / "specs"
+def test_untracked_specs_inside_root_do_not_block_done(real_copy):
+    root = real_copy()
+    specs = root / "notes" / "specs"
     write_feature(specs / "features" / "demo")
-    commit(tmp_path, "v2\n")
-    assert run_split(tmp_path, specs, "set", "demo", "T1", "verifying") == 0
+    real_commit(root, "code.txt", "v2\n", SUBJECTS["T1"])
+    assert run_split(root, specs, "set", "demo", "T1", "verifying") == 0
 
 
 @pytest.fixture
-def home(tmp_path):
-    """A repo holding several task folders, each with its own .specs."""
-    git(tmp_path, "init", "-q")
-    git(tmp_path, "config", "user.email", "t@example.com")
-    git(tmp_path, "config", "user.name", "t")
-    for name in ("tasks/mine/notes.md", "tasks/other/notes.md", "todo.md"):
-        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / name).write_text("v1\n")
-    git(tmp_path, "add", ".")
-    git(tmp_path, "commit", "-qm", "init")
-    specs = tmp_path / "tasks" / "mine" / ".specs"
+def home(real_copy):
+    """A repo holding several task folders (tasks/mine, tasks/other), the first with its own .specs."""
+    root = real_copy()
+    specs = root / "tasks" / "mine" / ".specs"
     write_feature(specs / "features" / "demo")
-    git(tmp_path, "add", ".")
-    git(tmp_path, "commit", "-qm", "specs")
-    commit_in(tmp_path, "tasks/mine/notes.md", "v2\n")
-    return tmp_path, specs
+    real_commit(root, "tasks/mine/notes.md", "v2\n", SUBJECTS["T1"])
+    return root, specs
 
 
 def test_dirty_files_of_other_tasks_do_not_block_verifying(home):
@@ -593,6 +669,34 @@ def test_new_writes_a_draft_skeleton_and_the_spec(repo):
     assert d["story"] == {"decisions": ["D-23", "D-24"], "validations": ["V-01"]}
     assert d["approved"] == {"spec": None, "tasks": None} and d["base"] is None
     assert (folder / "spec.md").read_text().startswith("# CSV export\n")
+
+
+def new_feature_text(repo):
+    assert run(repo, "new", "F1.1-csv", "--title", "CSV export", "--size", "S") == 0
+    return (repo / ".specs" / "features" / "F1.1-csv" / "feature.yaml").read_text()
+
+
+def test_new_writes_a_commented_example(repo):
+    text = new_feature_text(repo)
+    d = yaml.safe_load(text)
+    assert (d["acceptance"], d["tasks"], d["checks"]) == ([], [], [])
+    for line in ("# acceptance:", "#   - id: AC1", "#     text: ",
+                 "# tasks:", "#   - id: T1", "#     title: ", "#     covers: [AC1]", "#     blocked_by: []",
+                 "#     verify: ", "#     commit: ", "#     status: todo",
+                 "# checks:", "#   - ac: AC1", "#     manual: ", "#     status: pending"):
+        assert "\n" + line in text, line
+
+
+def test_new_example_uncommented_passes_check(repo, capsys):
+    text = new_feature_text(repo)
+    lines = [l for l in text.splitlines(True) if l not in ("acceptance: []\n", "tasks: []\n", "checks: []\n")]
+    uncommented = "".join(l[2:] if re.match(r"^# (acceptance|tasks|checks):|^#   ", l) else l for l in lines)
+    path = repo / ".specs" / "features" / "F1.1-csv" / "feature.yaml"
+    path.write_text(uncommented)
+    d = yaml.safe_load(uncommented)
+    assert [len(d[k]) for k in ("acceptance", "tasks", "checks")] == [1, 1, 1]
+    capsys.readouterr()
+    assert run(repo, "check", "F1.1-csv") == 0, capsys.readouterr().out
 
 
 def test_new_refuses_to_overwrite_a_feature(repo, capsys):
@@ -631,6 +735,32 @@ def test_roadmap_approve_refuses_an_invalid_roadmap(repo):
 
 def findings(root):
     return review(root)["findings"] if review_file(root).exists() else None
+
+
+def utf8_findings(root):
+    """The findings read as UTF-8, the encoding flow writes, whatever the locale."""
+    return yaml.safe_load(review_file(root).read_text(encoding="utf-8"))["findings"]
+
+
+def test_finding_reads_back_non_ascii_and_multi_line_values(repo):
+    hunk = "if x:\n    return 'não'\n"
+    assert run(repo, "finding", "demo", "--text", "Ação: 12", "--source", "user", "--file", "src/x.py",
+               "--line", "3", "--hunk", hunk, "--fix", "yes") == 0
+    assert run(repo, "finding", "demo", "--text", "2026", "--source", "user",
+               "--action", "wontfix", "--reason", "Fica assim:\nlinha dois") == 0
+    assert utf8_findings(repo) == [
+        {"id": "R-1", "text": "Ação: 12", "source": "user", "file": "src/x.py", "line": 3,
+         "hunk": hunk, "fix": "yes"},
+        {"id": "R-2", "text": "2026", "source": "user", "action": "wontfix", "reason": "Fica assim:\nlinha dois"}]
+    raw = review_file(repo).read_text(encoding="utf-8")
+    assert "\\u" not in raw
+    assert "    file: src/x.py\n" in raw and '    text: "2026"\n' in raw  # lib's rule: bare when safe, else quoted
+    assert run(repo, "finding", "demo", "R-2", "--action", "wontfix", "--reason", "Outra:\nrazão") == 0
+    assert utf8_findings(repo)[1] == {"id": "R-2", "text": "2026", "source": "user", "action": "wontfix",
+                                 "reason": "Outra:\nrazão"}
+    assert run(repo, "finding", "demo", "R-2", "--action", "fix", "--task", "T1") == 0
+    assert utf8_findings(repo)[1] == {"id": "R-2", "text": "2026", "source": "user", "action": "fix", "task": "T1"}
+    assert run(repo, "check", "demo") == 0
 
 
 def test_finding_creates_review_yaml_with_stamps(repo):
@@ -735,15 +865,70 @@ def test_finding_outcome_needs_review_yaml(repo):
     assert not review_file(repo).exists()
 
 
-def test_finding_none_writes_a_clean_review_yaml(repo):
-    assert run(repo, "finding", "demo", "--none") == 0
+def test_finding_none_writes_a_clean_review_yaml(repo, capsys):
+    assert run(repo, "finding", "demo", "--none", "--axes", "spec,standards") == 0
     assert findings(repo) == []
+    assert yaml.safe_load(review_file(repo).read_text())["axes"] == ["spec", "standards"]
+    capsys.readouterr()
     assert run(repo, "check", "demo") == 0
+    assert "names no axes" not in capsys.readouterr().out
+
+
+def test_finding_none_needs_axes(repo, capsys):
+    capsys.readouterr()
+    assert run(repo, "finding", "demo", "--none") == 1
+    assert "--axes" in capsys.readouterr().out
+    assert not review_file(repo).exists()
+
+
+@pytest.mark.parametrize("axes,named", [
+    ("spec,style", "style"),
+    ("spec", "standards"),
+    ("standards,tests", "spec"),
+])
+def test_finding_none_rejects_bad_axes(repo, capsys, axes, named):
+    capsys.readouterr()
+    assert run(repo, "finding", "demo", "--none", "--axes", axes) == 1
+    assert named in capsys.readouterr().out
+    assert not review_file(repo).exists()
+
+
+def test_finding_none_of_a_size_s_feature_needs_one_axis(repo):
+    feature(repo).write_text(FEATURE.replace("size: M", "size: S"))
+    assert run(repo, "finding", "demo", "--none", "--axes", "standards") == 0
+    assert yaml.safe_load(review_file(repo).read_text())["axes"] == ["standards"]
+
+
+def test_axes_without_none_are_refused(repo, capsys):
+    capsys.readouterr()
+    assert run(repo, "finding", "demo", "--text", "x", "--source", "user", "--axes", "spec") == 1
+    assert "--axes only goes with --none" in capsys.readouterr().out
+    assert not review_file(repo).exists()
+
+
+@pytest.mark.parametrize("axes", ["[spec, style]", "spec"])
+def test_check_rejects_axes_that_are_not_known(repo, capsys, axes):
+    review_file(repo).write_text("base: abc1234\naxes: %s\nfindings: []\n" % axes)
+    code, out = check_output(repo, capsys)
+    assert code == 1 and "axes must be a list of" in out
+
+
+def test_first_finding_drops_the_axes_of_a_clean_review(repo):
+    assert run(repo, "finding", "demo", "--none", "--axes", "spec,standards") == 0
+    assert run(repo, "finding", "demo", "--text", "x", "--source", "user") == 0
+    doc = yaml.safe_load(review_file(repo).read_text())
+    assert "axes" not in doc and len(doc["findings"]) == 1
+
+
+def test_check_warns_on_a_clean_review_without_axes(repo, capsys):
+    review_file(repo).write_text("base: abc1234\nfindings: []\n")
+    code, out = check_output(repo, capsys)
+    assert code == 0 and "clean review names no axes" in out
 
 
 def test_finding_none_is_refused_when_findings_exist(repo):
     run(repo, "finding", "demo", "--text", "x", "--action", "wontfix", "--reason", "y", "--source", "user")
-    assert run(repo, "finding", "demo", "--none") == 1
+    assert run(repo, "finding", "demo", "--none", "--axes", "spec,standards") == 1
     assert len(findings(repo)) == 1
 
 
@@ -754,7 +939,7 @@ def test_finding_needs_its_task_or_reason(repo, extra):
 
 
 def test_finding_appends_to_an_empty_list(repo):
-    run(repo, "finding", "demo", "--none")
+    run(repo, "finding", "demo", "--none", "--axes", "spec,standards")
     assert run(repo, "finding", "demo", "--text", "x", "--action", "wontfix", "--reason", "y", "--source", "user") == 0
     assert len(findings(repo)) == 1
 
@@ -806,6 +991,22 @@ def test_check_warns_on_a_finding_without_source_and_accepts_it(repo, capsys):
 def test_check_accepts_a_finding_with_a_new_source(repo, capsys, source):
     code, out = check_output(repo, capsys, REVIEWED % ("    - {text: a, action: wontfix, reason: r, source: %s}\n" % source))
     assert code == 0 and "source must be one of" not in out
+
+
+def test_check_accepts_a_legacy_source_in_review_yaml(repo, capsys):
+    review_file(repo).write_text("findings:\n  - {id: R-1, text: a, action: wontfix, reason: r, source: legacy}\n")
+    code, out = check_output(repo, capsys)
+    assert code == 0 and "source" not in out
+    with pytest.raises(SystemExit):
+        wontfix(repo, "--source", "legacy")
+    assert len(findings(repo)) == 1
+
+
+def test_source_help_names_bot_reviews(capsys):
+    with pytest.raises(SystemExit):
+        flow.main(["finding", "--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "a bot review (Copilot) is pr-comment" in help_text
 
 
 def test_check_rejects_a_bad_source_and_a_pr_comment_without_id(repo, capsys):
@@ -868,7 +1069,7 @@ def test_task_covering_two_criteria_waits_for_both(repo):
                              .replace("covers: [AC2]", "covers: [AC2]"))
     commit(repo, "a\n")
     assert run(repo, "set", "demo", "T1", "verifying") == 0
-    commit(repo, "b\n")
+    commit(repo, "b\n", "T2")
     assert run(repo, "set", "demo", "T2", "verifying") == 0
     assert run(repo, "set", "demo", "AC1", "pass") == 0
     assert data(repo)["tasks"][0]["status"] == "verifying"
@@ -1022,7 +1223,7 @@ def test_check_rejects_review_yaml_without_a_findings_list(repo, capsys, body):
     code, out = check_output(repo, capsys)
     assert code == 1 and "findings must be a list" in out
     capsys.readouterr()
-    assert run(repo, "finding", "demo", "--none") == 1
+    assert run(repo, "finding", "demo", "--none", "--axes", "spec,standards") == 1
     assert run(repo, "finding", "demo", "--text", "x", "--source", "user") == 1
     assert review_file(repo).read_text() == body
 
@@ -1056,3 +1257,28 @@ def test_finish_reads_a_legacy_review_block(repo):
     finish_ready(repo)
     feature(repo).write_text(feature(repo).read_text() + "review:\n  findings: []\n")
     assert run(repo, "finish", "demo") == 0
+
+
+@pytest.mark.parametrize("old,new,expected", [
+    ("blocked_by: [T1]", "blocked_by: T1", "ERROR: feature.yaml: T2 blocked_by must be a list ([T1])"),
+    ("covers: [AC2]", "covers: AC2", "ERROR: feature.yaml: T2 covers must be a list ([AC2])"),
+    ("checks:\n  - ac: AC1\n    test: \"test_demo.py > first\"\n    status: pending\n"
+     "  - ac: AC2\n    manual: \"Click the button and read the message\"\n    status: pending\n",
+     "checks: none\n", "ERROR: feature.yaml: checks must be a list ([none])"),
+])
+def test_check_fails_on_a_single_value_list_field(repo, capsys, old, new, expected):
+    assert FEATURE.count(old) == 1, old
+    code, out = check_output(repo, capsys, FEATURE.replace(old, new))
+    assert code == 1
+    assert expected in out, out
+
+
+def test_roadmap_fails_on_a_single_value_blocked_by(repo, capsys):
+    write_roadmap(repo, ROADMAP.replace("blocked_by: [F1.1]", "blocked_by: F1.1"))
+    assert run(repo, "roadmap") == 1
+    assert "ERROR: roadmap.yaml: F1.2 blocked_by must be a list ([F1.1])" in capsys.readouterr().out
+
+
+def test_check_passes_a_null_list_field(repo):
+    feature(repo).write_text(FEATURE.replace("blocked_by: []", "blocked_by:"))
+    assert run(repo, "check", "demo") == 0
