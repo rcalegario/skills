@@ -2,6 +2,7 @@
 code: BRIEF
 title: "<slug> brief"
 date: YYYY-MM-DD
+sources: {}   # written by `task.py consolidate`; one hash per group, see format.md, Brief sources
 ---
 
 # <slug> brief
@@ -12,7 +13,10 @@ How it works now, in a few paragraphs, citing context ids. One picture of today 
 
 ## BRIEF-2 Target
 
-What becomes true when the task is done, per item (AC-n, X-n), and where it departs from the base text. A `diff` over today's shape when the change is structural.
+<!-- task:generated requirements -->
+<!-- /task:generated -->
+
+Written by `task.py` between the markers (each item and its requirements, with the root decision); never edit it. Below the block, by hand: what becomes true when the task is done, per item (AC-n, X-n), and where it departs from the base text. A `diff` over today's shape when the change is structural.
 
 ## BRIEF-3 Path
 
@@ -20,5 +24,7 @@ How we get there: the decided approach, the order of the work, the validations t
 
 ## BRIEF-4 Open items
 
-- Decisions still open or proposed, with who decides.
-- Pending items with other people or tasks.
+<!-- task:generated open-items -->
+<!-- /task:generated -->
+
+Written by `task.py` between the markers (open and proposed decisions, open pending items, by person); never edit it. Below the block, by hand: follow-ups and notes the block cannot know.

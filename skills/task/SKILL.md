@@ -30,7 +30,7 @@ The `.md` files (context, `brief.md`, the specs) are for the user to read: where
 | record a run | `task.py <task> validate V-nn --status passed\|failed\|dropped --evidence E [--attach file]` |
 | open or close a pending item | `task.py <task> new pending --with who --action A [--refs ...]`, `task.py <task> close P-n [--link URL]` |
 | stamp the brief | `task.py <task> consolidate` |
-| write the statuses of requirements, items and the roadmap | `task.py <task> sync` |
+| write the statuses of requirements, items and the roadmap, and the open items of the brief | `task.py <task> sync` |
 
 Statuses are never typed: `acs.yaml` (requirements, items) and `roadmap.yaml` (features, milestones) get theirs from `task.py <task> sync`, which every `task.py` command also runs. After a `/flow` command (a task `verifying`, a check `pass`), run `sync` so the requirements follow. The state machine of each entity is in `format.md`, Status.
 
@@ -88,7 +88,7 @@ Runs when `/task <slug>` finds no task folder.
 
 1. **Read the base.** Ask whether there is a base text: an issue, a ticket pasted or linked, a note, a draft. Read it whole, comments included (they often carry what the description lacks). Then invoke the `grilling` skill on it until the problem, who it serves, what stays out, and the outcomes that make it done are settled. When the base text has acceptance criteria, they are the outcomes; grill the gaps.
 2. **Repos.** Ask which repos the work changes, proposing the most likely ones, and which is the main one. Create `<task>` now with the current date and time (`date +%Y-%m-%d-%H%M`) under the main repo's folder. For each repo, create a worktree inside the task folder: `git -C <origin> worktree add <task>/repos/<repo> -b <branch>`, with the branch named by the repo's convention (fallback `<type>/<slug>`). For a repo whose checkout is large (hundreds of MB), propose `git sparse-checkout set <dirs>` on the worktree, with only the folders the work touches. Read each repo's `AGENTS.md` / `CLAUDE.md` now: they do not load on their own from here.
-3. **Folder.** Create it from the templates: `README.md` (the base text verbatim, with its link; the problem, who it serves, what stays out), empty `pending.yaml` and `journal.yaml` (`[]`), then `task.py journal` for J-001. Fill `repos:` in the README header, with `main: true` on the main repo.
+3. **Folder.** Create it from the templates: `README.md` (the base text verbatim, with its link; the problem, who it serves, what stays out), empty `acs.yaml`, `pending.yaml` and `journal.yaml` (`[]`), then `task.py journal` for J-001. Fill `repos:` in the README header, with `main: true` on the main repo.
 4. **Facts.** Read the code the work touches and write `context/now.md` with code `NOW`: facts only, each section with an id, the current flow or structure drawn where it is the point (call tree, file tree, Mermaid).
 5. **Items.** Propose, in one message (**plan** format), the split of every outcome from step 1 (written as `AC-n`; anything beyond the base text as `X-n`) into requirements, with a first root decision for each. Write `acs.yaml`, the root decisions (`open` or `proposed`) and their validations only after the user confirms the split, then run `task.py sync` to fill the statuses.
 6. Run `status.py`, commit, and continue with **decide**.
@@ -98,18 +98,7 @@ Done when `status.py` has no failures and every requirement has a root decision 
 ## Resume
 
 1. When the base text is a link (an issue, a ticket), ask whether it changed or gained comments since the last session; write what changed into `context/`, decisions or `pending.yaml`, and journal it.
-2. Run `status.py`, read the last journal notes and `git -C <home> log --oneline -5 -- <task>`, then go to the first step whose bar is unmet:
-
-| State | Step |
-|---|---|
-| a decision `open` or `proposed` in some tree, not awaiting a spike | decide |
-| no `brief.md`, or decisions changed after its `date` | consolidate |
-| no `.specs/roadmap.yaml` | plan |
-| a spike under **Spikes** blocks the next feature to spec or build | spike |
-| a feature not `done` | build, through `/flow` |
-| an item not `concluded` without a `pr_note` | review |
-| no PR yet | pr |
-| PR merged | finish |
+2. Run `status.py`, read the last journal notes and `git -C <home> log --oneline -5 -- <task>`, then go to the step on its first line, `Step: <step> - <reason>` (`build` runs through `/flow`; `done` means nothing is left). The rules that pick it are in `format.md`, Step; the **Missing** column says what holds each requirement back. `finish` is printed once every feature has a PR link: check the PR is merged before running it.
 
 Say in one line where the task stands and which step you are taking.
 
@@ -132,7 +121,7 @@ Done when the frontier is empty, or every remaining decision waits on someone in
 
 ## consolidate
 
-Write `brief.md` from the template: **Today** from `context/`, **Target** per item and where it departs from the AC text, **Path** from the decided tree, **Open items** from the agenda in `status.py`. Cite ids; restate no decision in full. Target shows the change as a `diff` over today's shape when the change is structural; Path draws the order of the work when it is not linear. Run `task.py consolidate` to stamp `date`, then `task.py journal`, commit.
+Write `brief.md` from the template: **Today** from `context/`, **Target**: its block between the `task:generated requirements` markers is written by `task.py` (`format.md`, Brief requirements); below it, per item, where the target departs from the AC text, **Path** from the decided tree, **Open items**: its block between the `task:generated open-items` markers is written by `task.py` after every command and never by hand (`format.md`, Brief open items); add below it only what the block cannot know, such as follow-ups. Cite ids, only active decisions and items (`status.py` fails on a superseded or dropped one in the brief); restate no decision in full. Target shows the change as a `diff` over today's shape when the change is structural; Path draws the order of the work when it is not linear. When the step is `consolidate`, its reason names the groups of sources that changed since the brief was stamped (`context`, `acs`, `decisions`): reread what the brief says about them, correct it, then run `task.py consolidate` to stamp `date` and `sources`, then `task.py journal`, commit.
 
 With `--publish`, the reader is someone outside the task: write a version without task ids (each id replaced by what it names) and publish it the way the user picks: Claude Docs or an Artifact. Record the link with `task.py journal`.
 

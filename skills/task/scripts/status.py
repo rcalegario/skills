@@ -8,72 +8,82 @@ Usage:
     python status.py [task-dir] --gate pr       also fail when an item is neither concluded nor carries a pr_note
     python status.py [task-dir] --pr-notes      print the pr_note of every item and active decision, then exit
     python status.py [task-dir] --find ID       print <file>:<line> of each place ID is defined, without the checks
+    python status.py [task-dir] --json          print the same state as one JSON object (see collect())
 
 Exits 1 when it finds a failure. The folder layout is in ../reference/format.md.
 """
 import argparse
-import glob
+import json
 import os
 import re
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "flow", "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", ".."))
 
 try:
-    import yaml
+    import yaml  # noqa: F401  (only to say how to install it; lib/yamlio reads the files)
 except ImportError:
     sys.stderr.write("status.py needs PyYAML (pip install pyyaml).\n")
     sys.exit(2)
 
-import flow  # noqa: E402  (the milestone status rule is /flow's)
+from lib import yamlio  # noqa: E402
+from lib import modules  # noqa: E402
+from lib.yamlio import as_list  # noqa: E402
 
-DECISION_STATUSES = ("open", "proposed", "decided", "superseded", "dropped")
-INACTIVE = {"superseded", "dropped"}
-OPTION_STATUSES = ("chosen", "recommended", "alternative", "dropped")
-VALIDATION_STATUSES = ("pending", "passed", "failed", "dropped")
-SPIKE_BLOCKING = ("pending", "failed")  # a spike unblocks its decisions once passed or dropped
-PENDING_STATUSES = ("open", "done", "dropped")
-ORDER = ["discovery", "deciding", "decided", "built", "concluded"]
-ITEM_STATUSES = ORDER + ["dropped"]
+HERE = os.path.dirname(os.path.realpath(__file__))
+FLOW_ROADMAP = os.path.join(HERE, "..", "..", "flow", "scripts", "roadmap.py")
+flow_roadmap = modules.load(FLOW_ROADMAP, "flow_roadmap")  # /flow owns the roadmap status rule
+task_model = modules.load(os.path.join(HERE, "model.py"), "task_model")  # each task file read once per load
+task_derive = modules.load(os.path.join(HERE, "derive.py"), "task_derive")  # statuses computed once per load
+task_report = modules.load(os.path.join(HERE, "report.py"), "task_report")  # the text report from collect()
+task_brief = modules.load(os.path.join(HERE, "brief.py"), "task_brief")  # the brief's digest and generated blocks
+task_checks = modules.load(os.path.join(HERE, "checks.py"), "task_checks")  # the folder's consistency checks
+task_step = modules.load(os.path.join(HERE, "step.py"), "task_step")  # the next step and who it waits on
+task_gates = modules.load(os.path.join(HERE, "gates.py"), "task_gates")  # the gates, PR notes and feature links
 
-ID_RE = r"(?:D-\d{2}|V-\d{2}|J-\d{3}|P-\d+|(?:AC|X)-\d+(?:\.\d+)?)"
-
-
-def lst(value):
-    if value is None:
-        return []
-    return list(value) if isinstance(value, list) else [value]
-
-
-def load_yaml(path, default=None):
-    if not os.path.isfile(path):
-        return default
-    with open(path, encoding="utf-8") as fh:
-        try:
-            data = yaml.safe_load(fh)
-        except yaml.YAMLError as exc:
-            raise SystemExit("%s is not valid YAML: %s" % (path, exc))
-    return default if data is None else data
+INACTIVE = task_derive.INACTIVE
+SPIKE_BLOCKING = task_derive.SPIKE_BLOCKING
+ORDER = task_derive.ORDER
 
 
-def frontmatter(path):
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
-    m = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n", text, re.S)
-    return (yaml.safe_load(m.group(1)) or {}) if m else {}, text
+root_ids = task_derive.root_ids
+
+
+# The brief's digest and generated blocks live in brief.py; task.py and the tests use them through these names.
+SOURCE_GROUPS = task_brief.SOURCE_GROUPS
+DIGEST_LENGTH = task_brief.DIGEST_LENGTH
+_short_hash = task_brief._short_hash
+sources_digest = task_brief.sources_digest
+OPEN_ITEMS, NOTHING_OPEN = task_brief.OPEN_ITEMS, task_brief.NOTHING_OPEN
+REQUIREMENTS, NO_REQUIREMENTS = task_brief.REQUIREMENTS, task_brief.NO_REQUIREMENTS
+NO_ACTIVE_ROOT = task_derive.NO_ACTIVE_ROOT
+BLOCK_END, BLOCK_START_PREFIX = task_brief.BLOCK_END, task_brief.BLOCK_START_PREFIX
+block_start = task_brief.block_start
+block_span = task_brief.block_span
+unclosed_block = task_brief.unclosed_block
+generated_block = task_brief.generated_block
+open_items_block = task_brief.open_items_block
+one_line = task_brief.one_line
+requirements_block = task_brief.requirements_block
+BLOCKS = task_brief.BLOCKS
+heading_re = task_brief.heading_re
 
 
 class Task:
-    def __init__(self, root):
+    def __init__(self, root, model=None):
+        """The task at `root`, read through `model` when given (a load already made, e.g. after task.py's
+        sync put what it wrote into it), else through a new one."""
         self.root = os.path.abspath(root)
+        self.model = model or task_model.Model(self.root)
         self.failures, self.warnings = [], []
-        self.items = load_yaml(self.path("acs.yaml"), []) or []
-        self.journal = load_yaml(self.path("journal.yaml"), []) or []
-        self.pending = load_yaml(self.path("pending.yaml"), []) or []
+        self.items = self.model.load(self.path("acs.yaml"), []) or []
+        self.journal = self.model.load(self.path("journal.yaml"), []) or []
+        self.pending = self.model.load(self.path("pending.yaml"), []) or []
         self.decisions = self.load_dir("decisions", "D")
         self.validations = self.load_dir("validations", "V")
         self.features = self.load_features()
         self.roadmap = self.load_roadmap()
+        self.derived = task_derive.Derived(self.items, self.decisions, self.validations, self.features, self.pending)
 
     def path(self, *parts):
         return os.path.join(self.root, *parts)
@@ -84,8 +94,8 @@ class Task:
 
     def load_dir(self, sub, prefix):
         found = {}
-        for path in sorted(glob.glob(self.path(sub, "%s-*.yaml" % prefix))):
-            data = load_yaml(path, {})
+        for path in self.model.glob(sub, "%s-*.yaml" % prefix):
+            data = self.model.load(path, {})
             name = os.path.basename(path)
             if not isinstance(data, dict) or not data.get("id"):
                 self.fail("%s/%s: needs an 'id'" % (sub, name))
@@ -99,280 +109,61 @@ class Task:
         return found
 
     def load_features(self):
-        found = {}
-        for path in sorted(glob.glob(self.path(".specs", "features", "*", "feature.yaml"))):
-            data = load_yaml(path, {})
-            if isinstance(data, dict):
-                found[os.path.basename(os.path.dirname(path))] = data
-        return found
+        paths = self.model.glob(".specs", "features", "*", "feature.yaml")
+        return flow_roadmap.features_from(paths, lambda p: self.model.load(p, {}))
 
     def load_roadmap(self):
-        """Roadmap features by id, from .specs/roadmap.yaml."""
-        data = load_yaml(self.path(".specs", "roadmap.yaml"), {}) or {}
-        found = {}
-        for ms in lst(data.get("milestones") if isinstance(data, dict) else None):
-            for feat in lst(ms.get("features") if isinstance(ms, dict) else None):
-                if isinstance(feat, dict) and feat.get("id"):
-                    found[str(feat["id"])] = feat
-        return found
+        """Roadmap features by id, from .specs/roadmap.yaml, read by /flow's rule."""
+        data = self.model.load(self.path(".specs", "roadmap.yaml"), {}) or {}
+        if not isinstance(data, dict):
+            return {}
+        return {rid: feat for rid, (_, feat) in flow_roadmap.roadmap_features(data).items()}
 
     # ------------------------------------------------------------ spikes
 
+    def blocking_spikes(self):
+        """(id, validation) of every spike that still blocks its decisions."""
+        return self.derived.blocking_spikes()
+
     def spikes_of(self, d):
         """Spikes (validations with 'decides') naming decision d that still block it."""
-        return [v for v, val in self.validations.items()
-                if d in lst(val.get("decides")) and val.get("status") in SPIKE_BLOCKING]
+        return self.derived.spikes_of(d)
+
+    def blocked_features(self, val):
+        """Roadmap and spec'd features that link a decision spike val decides, sorted."""
+        return task_gates.blocked_features(self, val)
 
     # ------------------------------------------------------------ checks
 
-    def check(self):
-        self.check_shapes()
-        self.check_references()
-        self.build_tree()
-        self.check_links()
-        self.check_statuses()
-        self.check_layout()
+    def chain_end(self, d):
+        """The first decision after d along superseded_by that is not superseded, or None on a broken link or a cycle."""
+        return self.derived.chain_end(d)
 
-    def check_layout(self):
-        """Tasks live in <home>/tasks/<main repo>/<YYYY-MM-DD-HHMM>-<slug>/. A README without `main` is the old layout: warn only."""
-        path = self.path("README.md")
-        if not os.path.isfile(path):
-            return
-        fm, _ = frontmatter(path)
-        repos = [r for r in lst(fm.get("repos")) if isinstance(r, dict)]
-        if not repos:
-            return
-        mains = [str(r.get("name")) for r in repos if r.get("main")]
-        if not mains:
-            self.warnings.append("README: no main repo (old layout); mark one repo with `main: true`")
-            return
-        if len(mains) != 1:
-            self.fail("README: exactly one main repo, found %d (%s)" % (len(mains), ", ".join(mains)))
-            return
-        root = os.path.abspath(self.root)
-        folder = os.path.basename(root)
-        parent = os.path.basename(os.path.dirname(root))
-        if not re.match(r"^\d{4}-\d{2}-\d{2}-\d{4}-[a-z0-9]+(-[a-z0-9]+)*$", folder):
-            self.fail("folder %r must be named YYYY-MM-DD-HHMM-<slug>" % folder)
-        if parent != mains[0]:
-            self.fail("folder sits under %r but the main repo %r must be its parent" % (parent, mains[0]))
+    def decision_status(self, decision):
+        """The status of a decision id, or None when it is not one of the task's decisions."""
+        return self.derived.decision_status(decision)
 
-    def check_shapes(self):
-        for d, dec in self.decisions.items():
-            if dec.get("status") not in DECISION_STATUSES:
-                self.fail("%s: status must be one of %s" % (d, ", ".join(DECISION_STATUSES)))
-            for key in ("title", "question"):
-                if not str(dec.get(key) or "").strip():
-                    self.fail("%s: '%s' is required" % (d, key))
-            if dec.get("status") in ("decided", "superseded") and not str(dec.get("decision") or "").strip():
-                self.fail("%s: status %s needs 'decision'" % (d, dec.get("status")))
-            if dec.get("status") == "decided" and not str(dec.get("why") or "").strip():
-                self.fail("%s: status decided needs 'why'" % d)
-            if dec.get("status") == "decided" and self.spikes_of(d):
-                self.fail("%s: decided while spike %s has not passed" % (d, ", ".join(self.spikes_of(d))))
-            if dec.get("status") == "superseded" and dec.get("superseded_by") not in self.decisions:
-                self.fail("%s: superseded needs 'superseded_by' naming an existing decision" % d)
-            for i, opt in enumerate(lst(dec.get("options"))):
-                if not isinstance(opt, dict) or opt.get("status") not in OPTION_STATUSES:
-                    self.fail("%s: options[%d] status must be one of %s" % (d, i, ", ".join(OPTION_STATUSES)))
-        for v, val in self.validations.items():
-            if val.get("status") not in VALIDATION_STATUSES:
-                self.fail("%s: status must be one of %s" % (v, ", ".join(VALIDATION_STATUSES)))
-            if val.get("status") in ("passed", "failed") and not (val.get("date") and str(val.get("evidence") or "").strip()):
-                self.fail("%s: status %s needs 'date' and 'evidence'" % (v, val.get("status")))
-            for d in lst(val.get("decides")):
-                if d not in self.decisions:
-                    self.fail("%s: decides %s, which does not exist" % (v, d))
-            for att in lst(val.get("attachments")):
-                if not os.path.isfile(self.path("validations", "evidence", str(att))):
-                    self.fail("%s: attachment %s is not in validations/evidence/" % (v, att))
-        ids = [p.get("id") for p in self.pending if isinstance(p, dict)]
-        for p in self.pending:
-            if not isinstance(p, dict) or not p.get("id"):
-                self.fail("pending.yaml: every entry needs an 'id'")
-                continue
-            if ids.count(p["id"]) > 1:
-                self.fail("pending.yaml: id %s is duplicated" % p["id"])
-            if p.get("status") not in PENDING_STATUSES:
-                self.fail("%s: status must be one of %s" % (p["id"], ", ".join(PENDING_STATUSES)))
-            if p.get("status") in ("done", "dropped") and not p.get("closed"):
-                self.fail("%s: status %s needs 'closed'" % (p["id"], p.get("status")))
-            if not lst(p.get("with")) or not str(p.get("action") or "").strip():
-                self.fail("%s: needs 'with' and 'action'" % p["id"])
-        jids = [j.get("id") for j in self.journal if isinstance(j, dict)]
-        for jid in sorted({j for j in jids if jids.count(j) > 1}):
-            self.fail("journal.yaml: id %s is duplicated" % jid)
-
-    def defined_ids(self):
-        ids = set(self.decisions) | set(self.validations)
-        ids |= {j.get("id") for j in self.journal if isinstance(j, dict)}
-        ids |= {p.get("id") for p in self.pending if isinstance(p, dict)}
-        for item in self.items:
-            ids.add(item.get("id"))
-            ids |= {r.get("id") for r in lst(item.get("requirements"))}
-        self.codes = set()
-        for path in glob.glob(self.path("context", "*.md")) + [self.path("brief.md")]:
-            if not os.path.isfile(path):
-                continue
-            fm, text = frontmatter(path)
-            if fm.get("code"):
-                self.codes.add(str(fm["code"]))
-            ids |= set(re.findall(r"^#+ ([A-Z]+-\d+(?:\.\d+)*)\b", text, re.M))
-        return ids
-
-    def check_references(self):
-        defined = self.defined_ids()
-        codes = "|".join(sorted(self.codes))
-        pattern = ID_RE if not codes else r"(?:%s|(?:%s)-\d+(?:\.\d+)*)" % (ID_RE, codes)
-        id_re = re.compile(r"\b%s\b" % pattern)
-        for path in self.text_files():
-            rel = os.path.relpath(path, self.root).replace("\\", "/")
-            with open(path, encoding="utf-8") as fh:
-                text = fh.read()
-            for ref in sorted(set(id_re.findall(text))):
-                if ref not in defined:
-                    self.fail("%s: cites %s, which does not exist" % (rel, ref))
-
-    SKIP = {"repos", ".git", os.path.join("context", "archive"), os.path.join("validations", "evidence")}
+    def active_root(self, decision):
+        """The active decision a requirement rooted at `decision` hangs from, or NO_ACTIVE_ROOT."""
+        return self.derived.active_root(decision)
 
     def text_files(self):
         """Every .md and .yaml file of the task, without walking worktrees, git or archives."""
-        for dirpath, dirnames, filenames in os.walk(self.root):
-            rel = os.path.relpath(dirpath, self.root)
-            dirnames[:] = [d for d in dirnames if os.path.normpath(os.path.join(rel, d)) not in self.SKIP]
-            for name in filenames:
-                if name.endswith((".md", ".yaml")):
-                    yield os.path.join(dirpath, name)
+        return self.model.text_files()
 
-    def build_tree(self):
-        self.children = {d: [] for d in self.decisions}
-        for d, dec in self.decisions.items():
-            if dec.get("status") in INACTIVE:
-                continue
-            for parent in lst(dec.get("born_from")):
-                if parent in self.children:
-                    self.children[parent].append(d)
-
-    def tree(self, d, path=()):
-        """d and all its active children, recursively."""
-        if d in path:
-            self.fail("cycle in born_from: " + " -> ".join(path + (d,)))
-            return []
-        out = [d]
-        for child in self.children.get(d, []):
-            out += [x for x in self.tree(child, path + (d,)) if x not in out]
-        return out
+    def check(self):
+        """Every check of the folder (checks.py); sets req_tree and dec_features for collect() and the gates."""
+        task_checks.run(self)
 
     def active_items(self):
-        return [i for i in self.items if i.get("status") != "dropped"]
-
-    def check_links(self):
-        self.req_tree = {}
-        in_tree = set()
-        proven = set()
-        for item in self.active_items():
-            reqs = lst(item.get("requirements"))
-            if not reqs:
-                self.fail("%s: has no requirements" % item.get("id"))
-            for req in reqs:
-                rid = req.get("id")
-                roots = lst(req.get("decision"))
-                if not roots:
-                    self.fail("%s: requirement without a decision" % rid)
-                elif len(roots) > 1:
-                    self.fail("%s: requirement with %d decisions (%s); it takes one root" % (rid, len(roots), ", ".join(roots)))
-                if not lst(req.get("validations")):
-                    self.fail("%s: requirement without a validation" % rid)
-                for v in lst(req.get("validations")):
-                    if lst(self.validations.get(v, {}).get("decides")):
-                        self.fail("%s: lists spike %s; a spike decides, it proves no requirement" % (rid, v))
-                tree = []
-                for r in roots:
-                    if r not in self.decisions:
-                        continue
-                    if self.decisions[r].get("status") in INACTIVE:
-                        self.fail("%s: points to %s, which is %s" % (rid, r, self.decisions[r]["status"]))
-                    tree += [x for x in self.tree(r) if x not in tree]
-                self.req_tree[rid] = tree
-                in_tree |= set(tree)
-                proven |= set(lst(req.get("validations")))
-        for d, dec in self.decisions.items():
-            if dec.get("status") not in INACTIVE and d not in in_tree:
-                self.fail("%s: orphan (not in the tree of any requirement)" % d)
-        for v, val in self.validations.items():
-            if v not in proven and val.get("status") != "dropped" and not lst(val.get("decides")):
-                self.warnings.append("%s: proves no requirement" % v)
-        self.dec_features = {d: [] for d in self.decisions}
-        repos = self.repo_names()
-        for name, feat in self.features.items():
-            if repos is not None and feat.get("repo") not in repos:
-                self.fail("feature %s: repo %r is not in the README repos (%s)" % (
-                    name, feat.get("repo"), ", ".join(sorted(repos)) or "none"))
-            story = feat.get("story") if isinstance(feat.get("story"), dict) else {}
-            for d in lst(story.get("decisions")):
-                if d not in self.decisions:
-                    continue
-                self.dec_features[d].append(name)
-                if self.decisions[d].get("status") in INACTIVE:
-                    self.fail("feature %s: links %s, which is %s" % (name, d, self.decisions[d]["status"]))
-        if os.path.isfile(self.path(".specs", "roadmap.yaml")):
-            for d, dec in self.decisions.items():
-                if dec.get("status") == "decided" and dec.get("needs_code", True) and not self.dec_features[d]:
-                    self.warnings.append("%s: decided and needs code, but no feature links it" % d)
-
-    def check_statuses(self):
-        """The status written in acs.yaml and roadmap.yaml is the one the rest of the folder implies."""
-        sync = "run `task.py sync`"
-        for item in self.items:
-            if item.get("status") is not None and item.get("status") not in ITEM_STATUSES:
-                self.fail("%s: status must be one of %s" % (item.get("id"), ", ".join(ITEM_STATUSES)))
-        for item in self.active_items():
-            rows = [(item.get("id"), item, self.item_status(item), "its requirements")]
-            rows += [(r.get("id"), r, self.req_status(r), "the decisions, features and validations")
-                     for r in lst(item.get("requirements"))]
-            for ident, entity, computed, source in rows:
-                stored = entity.get("status")
-                if stored is None:
-                    self.fail("%s: no status (%s)" % (ident, sync))
-                elif stored not in ORDER:
-                    self.fail("%s: status must be one of %s" % (ident, ", ".join(ORDER)))
-                elif stored != computed:
-                    self.fail("%s: status is %s but %s say %s (%s)" % (ident, stored, source, computed, sync))
-        self.check_roadmap_statuses(sync)
-
-    def check_roadmap_statuses(self, sync):
-        data = load_yaml(self.path(".specs", "roadmap.yaml"), {}) or {}
-        if not isinstance(data, dict):
-            return
-        linked = {}
-        for feat in self.features.values():
-            if feat.get("roadmap") is not None:
-                linked.setdefault(str(feat["roadmap"]), feat.get("status"))
-        for ms in lst(data.get("milestones")):
-            if not isinstance(ms, dict):
-                continue
-            states = []
-            for feat in lst(ms.get("features")):
-                if not isinstance(feat, dict) or feat.get("id") is None:
-                    continue
-                computed = linked.get(str(feat["id"])) or "planned"
-                states.append(computed)
-                self.compare_roadmap(feat["id"], feat.get("status"), computed, sync)
-            if states:
-                self.compare_roadmap(ms.get("id"), ms.get("status"), flow.milestone_status(states), sync)
-
-    def compare_roadmap(self, ident, stored, computed, sync):
-        if stored is None:
-            self.fail("%s: no roadmap status (%s)" % (ident, sync))
-        elif stored != computed:
-            self.fail("%s: roadmap status is %s but the features say %s (%s)" % (ident, stored, computed, sync))
+        return self.derived.active_items()
 
     def repo_names(self):
         """Repo names from the README header, or None when the README has no repos list."""
         path = self.path("README.md")
         if not os.path.isfile(path):
             return None
-        fm, _ = frontmatter(path)
+        fm = self.model.frontmatter(path)
         if not isinstance(fm.get("repos"), list):
             return None
         return {str(r.get("name")) for r in fm["repos"] if isinstance(r, dict)}
@@ -380,184 +171,147 @@ class Task:
     # ------------------------------------------------------------ status
 
     def req_status(self, req):
-        tree = self.req_tree.get(req.get("id"), [])
-        vals = lst(req.get("validations"))
-        if len(lst(req.get("decision"))) != 1 or not vals or not tree:
-            return "discovery"
-        if any(self.decisions[d].get("status") != "decided" for d in tree):
-            return "deciding"
-        coded = [d for d in tree if self.decisions[d].get("needs_code", True)]
-        for d in coded:
-            feats = self.dec_features.get(d, [])
-            if not feats or any(self.features[f].get("status") != "done" for f in feats):
-                return "decided"
-        if any(self.validations.get(v, {}).get("status") != "passed" for v in vals):
-            return "built"
-        return "concluded"
+        return self.derived.req_status(req)
 
     def item_status(self, item):
-        sts = [self.req_status(r) for r in lst(item.get("requirements"))]
-        return min(sts, key=ORDER.index) if sts else "discovery"
+        return self.derived.item_status(item)
+
+    def missing(self, req):
+        """What keeps req from its next status, by the status it has: one dict per blocker."""
+        return self.derived.missing(req)
+
+    def missing_text(self, req):
+        return "; ".join(m["text"] for m in self.missing(req)) or "-"
+
+    # ------------------------------------------------------------ structured state
+
+    def readme(self):
+        path = self.path("README.md")
+        return self.model.frontmatter(path) if os.path.isfile(path) else {}
+
+    def repos(self):
+        """The repos listed in the README header; [] when there is none."""
+        return [r for r in as_list(self.readme().get("repos")) if isinstance(r, dict)]
+
+    def roadmap_milestones(self):
+        data = self.model.load(self.path(".specs", "roadmap.yaml"), {}) or {}
+        out = []
+        for ms in as_list(data.get("milestones") if isinstance(data, dict) else None):
+            if not isinstance(ms, dict):
+                continue
+            feats = [{"id": str(f.get("id")), "title": f.get("title"), "status": f.get("status"),
+                      "goal": f.get("goal"), "blocked_by": [str(b) for b in as_list(f.get("blocked_by"))]}
+                     for f in as_list(ms.get("features")) if isinstance(f, dict) and f.get("id") is not None]
+            out.append({"id": ms.get("id"), "title": ms.get("title"), "status": ms.get("status"),
+                        "outcome": ms.get("outcome"), "features": feats})
+        return out
+
+    def agenda(self):
+        """Open or proposed decisions and open pending items, grouped by who they wait on."""
+        return self.derived.agenda()
+
+    def agenda_lines(self):
+        """The agenda as one line per entry, by person: the Agenda of the report and the open-items block of the brief."""
+        return task_report.agenda_lines(self.agenda())
+
+    def collect(self):
+        """The task's whole state as plain data; call after check(). Printed by --json."""
+        fm = self.readme()
+        reqs, items = [], []
+        for item in self.items:
+            dropped = item.get("status") == "dropped"
+            items.append({"id": item.get("id"), "text": item.get("text"),
+                          "status": "dropped" if dropped else self.item_status(item),
+                          "pr_note": item.get("pr_note"),
+                          "requirements": [r.get("id") for r in as_list(item.get("requirements"))]})
+            if dropped:
+                continue
+            for req in as_list(item.get("requirements")):
+                rid = req.get("id")
+                reqs.append({
+                    "id": rid, "item": item.get("id"), "text": req.get("text"), "status": self.req_status(req),
+                    "decision": (root_ids(req) or [None])[0], "tree": self.req_tree.get(rid, []),
+                    "validations": [{"id": v, "status": self.validations.get(v, {}).get("status")}
+                                    for v in as_list(req.get("validations"))],
+                    "missing": self.missing(req)})
+        features = []
+        for name, feat in self.features.items():
+            story = task_model.story(feat)
+            features.append({"id": name, "roadmap": None if feat.get("roadmap") is None else str(feat["roadmap"]),
+                             "title": feat.get("title"), "status": feat.get("status"), "size": feat.get("size"),
+                             "repo": feat.get("repo"), "pr": feat.get("pr"),
+                             "decisions": as_list(story.get("decisions")), "validations": as_list(story.get("validations"))})
+        spikes = [{"id": v, "status": val.get("status"), "where": val.get("where"),
+                   "decides": as_list(val.get("decides")), "blocks": self.blocked_features(val)}
+                  for v, val in self.blocking_spikes()]
+        return {
+            "task": {"id": os.path.basename(self.root), "root": self.root.replace(os.sep, "/"),
+                     "title": fm.get("title"), "link": fm.get("link"),
+                     "repos": self.repos()},
+            "step": self.step(),
+            "items": items, "requirements": reqs, "features": features,
+            "roadmap": self.roadmap_milestones(), "spikes": spikes, "agenda": self.agenda(),
+            "warnings": list(self.warnings), "failures": list(self.failures),
+        }
+
+    def waits(self, ident, in_pending):
+        return task_step.waits(self, ident, in_pending)
+
+    def item_waits(self, ident, in_pending):
+        return task_step.item_waits(self, ident, in_pending)
+
+    def step(self):
+        """The /task step to take next (step.py)."""
+        return task_step.step(self)
 
     def report(self):
-        out = []
-        out.append("# Items\n")
-        out.append("| Item | Status | Requirements | Decisions decided | Validations passed |")
-        out.append("|---|---|---|---|---|")
-        req_lines = []
-        for item in self.active_items():
-            ds, vs = set(), set()
-            for req in lst(item.get("requirements")):
-                tree = self.req_tree.get(req.get("id"), [])
-                ds |= set(tree)
-                vs |= set(lst(req.get("validations")))
-                roots = lst(req.get("decision"))
-                waiting = ["%s (%s)" % (d, self.decisions[d].get("status")) for d in tree
-                           if self.decisions[d].get("status") != "decided"]
-                children = [d for d in tree if d not in roots]
-                vtxt = ", ".join("%s (%s)" % (v, self.validations.get(v, {}).get("status", "?"))
-                                 for v in lst(req.get("validations")))
-                req_lines.append("| %s | %s | %s | %s | %s | %s |" % (
-                    req.get("id"), self.req_status(req), ", ".join(roots) or "-",
-                    ", ".join(children) or "-", ", ".join(waiting) or "-", vtxt or "-"))
-            n_dec = sum(1 for d in ds if self.decisions[d].get("status") == "decided")
-            n_val = sum(1 for v in vs if self.validations.get(v, {}).get("status") == "passed")
-            out.append("| %s | %s | %d | %d/%d | %d/%d |" % (
-                item.get("id"), self.item_status(item), len(lst(item.get("requirements"))),
-                n_dec, len(ds), n_val, len(vs)))
-        out.append("\n# Requirements\n")
-        out.append("| Requirement | Status | Root | Children | Not decided | Validations |")
-        out.append("|---|---|---|---|---|---|")
-        out += req_lines
-        if self.features:
-            out.append("\n# Features\n")
-            out.append("| Feature | Status | Decisions | Validations |")
-            out.append("|---|---|---|---|")
-            for name, feat in self.features.items():
-                story = feat.get("story") if isinstance(feat.get("story"), dict) else {}
-                out.append("| %s | %s | %s | %s |" % (name, feat.get("status"),
-                                                     ", ".join(lst(story.get("decisions"))) or "-",
-                                                     ", ".join(lst(story.get("validations"))) or "-"))
-        spikes = [(v, val) for v, val in self.validations.items()
-                  if lst(val.get("decides")) and val.get("status") in SPIKE_BLOCKING]
-        if spikes:
-            out.append("\n# Spikes\n")
-            out.append("| Spike | Status | Where | Decides | Blocks features |")
-            out.append("|---|---|---|---|---|")
-            for v, val in spikes:
-                blocked = sorted({f for d in lst(val.get("decides")) for f in self.features_of(d)})
-                out.append("| %s | %s | %s | %s | %s |" % (
-                    v, val.get("status"), val.get("where") or "-",
-                    ", ".join(lst(val.get("decides"))), ", ".join(blocked) or "-"))
-        agenda = {}
-        for d, dec in self.decisions.items():
-            if dec.get("status") in ("open", "proposed"):
-                waits = self.spikes_of(d)
-                suffix = " - awaiting spike %s" % ", ".join(waits) if waits else ""
-                for who in lst(dec.get("discuss_with")) or ["(nobody named)"]:
-                    agenda.setdefault(str(who), []).append("%s (%s) %s%s" % (d, dec["status"], dec.get("title"), suffix))
-        for p in self.pending:
-            if isinstance(p, dict) and p.get("status") == "open":
-                for who in lst(p.get("with")):
-                    agenda.setdefault(str(who), []).append("%s (pending) %s" % (p.get("id"), p.get("action")))
-        if agenda:
-            out.append("\n# Agenda\n")
-            for who in sorted(agenda):
-                out.append("**%s**" % who)
-                out += ["- %s" % line for line in agenda[who]]
-                out.append("")
-        return "\n".join(out)
+        """The text report, rendered from collect() and what it does not carry: each decision's and
+        validation's status, and every root each requirement names, in collect()'s order."""
+        statuses = {d: dec.get("status") for d, dec in self.decisions.items()}
+        statuses.update({v: val.get("status", "?") for v, val in self.validations.items()})
+        roots = [root_ids(req) for item in self.active_items() for req in as_list(item.get("requirements"))]
+        return task_report.render(self.collect(), statuses, roots)
 
     # ------------------------------------------------------------ gates
 
-    def matches(self, fid, name):
-        """True when feature id fid (e.g. F1.1) names roadmap id or feature folder name (e.g. F1.1-template)."""
-        return fid == name or name.startswith(fid + "-") or fid.startswith(name + "-")
-
     def feature_decisions(self, fid):
-        """Decisions linked to feature fid: its roadmap entry's 'decisions' and its feature.yaml story."""
-        found = []
-        for rid, feat in self.roadmap.items():
-            if self.matches(fid, rid):
-                found += lst(feat.get("decisions"))
-        for name, feat in self.features.items():
-            if self.matches(fid, name):
-                story = feat.get("story") if isinstance(feat.get("story"), dict) else {}
-                found += lst(story.get("decisions"))
-        return [d for i, d in enumerate(found) if d not in found[:i]]
+        return task_gates.feature_decisions(self, fid)
 
     def features_of(self, d):
-        """Roadmap and spec'd features that link decision d."""
-        out = {rid for rid, feat in self.roadmap.items() if d in lst(feat.get("decisions"))}
-        return out | set(self.dec_features.get(d, []))
+        return task_gates.features_of(self, d)
 
     def gate(self, name, feature=None):
-        if name == "spec":
-            if not any(self.matches(feature, n) for n in list(self.roadmap) + list(self.features)):
-                self.fail("gate spec: feature %s is neither in the roadmap nor in .specs/features" % feature)
-            for d in self.feature_decisions(feature):
-                dec = self.decisions.get(d)
-                if dec is None:
-                    continue
-                waits = self.spikes_of(d)
-                if waits:
-                    self.fail("gate spec: %s waits for spike %s, which decides %s" % (feature, ", ".join(waits), d))
-                elif dec.get("status") == "open":
-                    self.fail("gate spec: %s links %s, which is open" % (feature, d))
-                elif dec.get("status") == "proposed":
-                    self.warnings.append("gate spec: %s links %s, which is proposed" % (feature, d))
-            return
-        if name == "plan":
-            for item in self.active_items():
-                for req in lst(item.get("requirements")):
-                    for d in self.req_tree.get(req.get("id"), []):
-                        st = self.decisions[d].get("status")
-                        if st == "open":
-                            self.fail("gate plan: %s is open (tree of %s)" % (d, req.get("id")))
-                        elif st == "proposed":
-                            self.warnings.append("gate plan: %s is proposed; list it in BRIEF-4" % d)
-        elif name == "pr":
-            for item in self.active_items():
-                st = self.item_status(item)
-                if st != "concluded" and not str(item.get("pr_note") or "").strip():
-                    self.fail("gate pr: %s is %s and has no pr_note" % (item.get("id"), st))
-            for p in self.pending:
-                if isinstance(p, dict) and p.get("status") == "open":
-                    self.warnings.append("gate pr: %s is still open" % p.get("id"))
+        task_gates.gate(self, name, feature)
 
     def pr_notes(self):
-        out = []
-        for item in self.active_items():
-            if str(item.get("pr_note") or "").strip():
-                out.append("## %s (%s)\n\n%s" % (item.get("id"), self.item_status(item), item["pr_note"].strip()))
-        for d, dec in self.decisions.items():
-            if dec.get("status") not in INACTIVE and str(dec.get("pr_note") or "").strip():
-                out.append("## %s %s\n\n%s" % (d, dec.get("title"), dec["pr_note"].strip()))
-        vals = ["- %s %s: %s" % (v, val.get("title"), val.get("status")) for v, val in self.validations.items()
-                if val.get("status") != "dropped"]
-        if vals:
-            out.append("## Validations\n\n" + "\n".join(vals))
-        return "\n\n".join(out)
+        return task_gates.pr_notes(self)
 
     def find(self, ident):
         """Each place ident is defined, as <file>:<line>: a YAML `id:` line or a Markdown heading."""
         defined = re.compile(r"""^\s*(?:-\s+)?id:\s*["']?%s["']?\s*$|^#+\s+%s(?![\w.-])""" % (re.escape(ident), re.escape(ident)))
         hits = []
         for path in sorted(self.text_files()):
-            with open(path, encoding="utf-8") as fh:
-                for n, line in enumerate(fh, 1):
-                    if defined.match(line):
-                        hits.append("%s:%d" % (os.path.relpath(path, self.root).replace("\\", "/"), n))
+            for n, line in enumerate(self.model.text(path).split("\n"), 1):
+                if defined.match(line):
+                    hits.append("%s:%d" % (os.path.relpath(path, self.root).replace("\\", "/"), n))
         return hits
 
 
 def main(argv=None):
+    try:
+        return run(argv)
+    except yamlio.YamlError as exc:
+        raise SystemExit(str(exc))
+
+
+def run(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("task", nargs="?", default=".")
     ap.add_argument("--gate", choices=("plan", "spec", "pr"))
     ap.add_argument("--feature", help="with --gate spec: the feature id (e.g. F1.1)")
     ap.add_argument("--pr-notes", action="store_true")
     ap.add_argument("--find", metavar="ID", help="print <file>:<line> where ID is defined, and skip the checks")
+    ap.add_argument("--json", action="store_true", help="print the state as one JSON object")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -577,6 +331,9 @@ def main(argv=None):
         ap.error("--gate spec needs --feature")
     if args.gate:
         task.gate(args.gate, args.feature)
+    if args.json:
+        print(json.dumps(task.collect(), ensure_ascii=False, indent=1, default=str))
+        return 1 if task.failures else 0
     print(task.report())
     if task.warnings:
         print("\n# Warnings\n")

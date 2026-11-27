@@ -14,329 +14,49 @@ Usage:
     python task.py [task-dir] sync
 
 `sync` writes the status of every requirement and item (acs.yaml) and of every roadmap feature and milestone
-(.specs/roadmap.yaml) from the rest of the folder; every other command does it after its own edit. These
-statuses are never typed by hand.
+(.specs/roadmap.yaml) from the rest of the folder, and the generated blocks of brief.md: the requirements
+(BRIEF-2) from acs.yaml and the open items (BRIEF-4) from the decisions and pending.yaml; every other command
+does it after its own edit. None of these is typed by hand.
 
 Each command edits only the lines it owns (comments and order stay), then runs the status.py checks and
 exits 1 when the folder has failures. The folder layout is in ../reference/format.md.
 """
 import argparse
-import datetime
-import glob
-import json
 import os
-import re
 import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(HERE, "..", "..", "flow", "scripts"))
+sys.path.insert(0, os.path.join(HERE, "..", "..", ".."))
 
-import flow  # noqa: E402  (line-editing helpers shared with /flow)
-import status  # noqa: E402
+import status  # noqa: E402  (by name: task.py runs only as a script, whose folder Python puts on sys.path)
+from lib import modules  # noqa: E402
+from lib import yamledit as ye  # noqa: E402
+from lib import yamlio  # noqa: E402
 
-yaml = status.yaml
-
-
-def today():
-    return datetime.date.today().isoformat()
-
-
-class Refusal(Exception):
-    pass
+# Loaded by file path, never through sys.path (see the skill's CLAUDE.md).
+commands = modules.load(os.path.join(HERE, "commands.py"), "task_commands")  # each command's edit
+task_sync = modules.load(os.path.join(HERE, "sync.py"), "task_sync")  # acs, brief and roadmap from one load
 
 
-# ---------------------------------------------------------------- rendering
-
-def scalar(value):
-    """One YAML line for a value: flow list, number, or a double-quoted string."""
-    if isinstance(value, list):
-        return "[%s]" % ", ".join(scalar(v) for v in value)
-    if value is None:
-        return "null"
-    if isinstance(value, (bool, int)):
-        return json.dumps(value)
-    text = str(value)
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", text):
-        return text  # a YAML date, as every template writes it
-    if re.match(r"^[A-Za-z0-9_./-]+$", text) and not re.match(r"^(null|true|false|yes|no|~|[0-9.-]+)$", text, re.I):
-        return text
-    return json.dumps(text, ensure_ascii=False)
-
-
-def render(key, value, indent=0):
-    """Lines for `key: value`; a multi-line string becomes a literal block."""
-    pad = " " * indent
-    if isinstance(value, str) and "\n" in value.strip("\n"):
-        body = ["%s  %s\n" % (pad, ln) if ln else "\n" for ln in value.strip("\n").split("\n")]
-        return ["%s%s: |\n" % (pad, key)] + body
-    return ["%s%s: %s\n" % (pad, key, scalar(value))]
-
-
-def put(lines, key, value, after=None):
-    """Set a top-level key, replacing its whole value (a block included); insert after `after:` when new."""
-    start = next((i for i, l in enumerate(lines) if re.match(r"^%s:(\s|$)" % re.escape(key), l)), None)
-    new = render(key, value)
-    if start is not None:
-        end = flow.block_end(lines, start, 0)
-        while end < len(lines) and re.match(r"^-(\s|$)", lines[end]):  # an unindented list belongs to its key
-            end = flow.block_end(lines, end, 0)
-        comment = re.search(r"\s+#.*$", lines[start].rstrip("\n"))
-        if comment and len(new) == 1 and end == start + 1:
-            new[0] = new[0].rstrip("\n") + comment.group(0) + "\n"
-        lines[start:end] = new
-        return
-    anchor = next((i for i, l in enumerate(lines) if after and re.match(r"^%s:" % after, l)), None)
-    pos = flow.block_end(lines, anchor, 0) if anchor is not None else len(lines)
-    lines[pos:pos] = new
-
-
-def read_lines(path):
-    with open(path, encoding="utf-8") as fh:
-        lines = fh.read().splitlines(True)
-    if lines and not lines[-1].endswith("\n"):
-        lines[-1] += "\n"
-    return lines
-
-
-def write_lines(path, lines, verify):
-    text = "".join(lines)
-    if not verify(yaml.safe_load(text)):
-        raise Refusal("the edit to %s did not apply" % path)
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write(text)
-
-
-# ---------------------------------------------------------------- ids and files
-
-def next_number(root, sub, prefix, width):
-    nums = [int(m.group(1)) for p in glob.glob(os.path.join(root, sub, "%s-*.yaml" % prefix))
-            for m in [re.match(r"%s-(\d+)-" % prefix, os.path.basename(p))] if m]
-    return "%s-%0*d" % (prefix, width, max(nums or [0]) + 1)
-
-
-def find_file(root, sub, ident):
-    hits = glob.glob(os.path.join(root, sub, "%s-*.yaml" % ident))
-    if not hits:
-        raise Refusal("%s is not defined in %s/" % (ident, sub))
-    return hits[0]
-
-
-def append_item(path, item_lines, items):
-    """Append a list item to journal.yaml / pending.yaml, replacing an empty `[]`."""
-    lines = read_lines(path) if os.path.isfile(path) else []
-    lines = [l for l in lines if l.strip() != "[]"]
-    if lines and lines[-1].strip():
-        lines.append("\n")
-    lines += item_lines
-    write_lines(path, lines, lambda d: isinstance(d, list) and len(d) == len(items) + 1)
-
-
-def item_lines(fields):
-    lines = []
-    for i, (key, value) in enumerate(fields):
-        out = render(key, value, 2)
-        out[0] = ("- " if i == 0 else "  ") + out[0][2:]
-        lines += out
-    return lines
-
-
-def split_refs(text):
-    return [r.strip() for r in (text or "").split(",") if r.strip()]
-
-
-# ---------------------------------------------------------------- commands
-
-def cmd_journal(root, a):
-    path = os.path.join(root, "journal.yaml")
-    notes = status.load_yaml(path, []) or []
-    nums = [int(n["id"][2:]) for n in notes if isinstance(n, dict) and re.match(r"^J-\d+$", str(n.get("id")))]
-    ident = "J-%03d" % (max(nums or [0]) + 1)
-    append_item(path, item_lines([("id", ident), ("date", today()), ("type", a.type),
-                                  ("text", a.text), ("refs", split_refs(a.refs))]), notes)
-    return "%s journal note" % ident
-
-
-def mutate(path, change, verify):
-    lines = read_lines(path)
-    change(lines)
-    write_lines(path, lines, verify)
-
-
-def doc(path):
-    return yaml.safe_load(open(path, encoding="utf-8")) or {}
-
-
-def cmd_new_pending(root, a):
-    path = os.path.join(root, "pending.yaml")
-    items = status.load_yaml(path, []) or []
-    nums = [int(i["id"][2:]) for i in items if isinstance(i, dict) and re.match(r"^P-\d+$", str(i.get("id")))]
-    ident = "P-%d" % (max(nums or [0]) + 1)
-    append_item(path, item_lines([("id", ident), ("with", split_refs(a.who)), ("action", a.action),
-                                  ("refs", split_refs(a.refs)), ("status", "open")]), items)
-    return "%s pending" % ident
-
-
-def cmd_new_decision(root, a):
-    ident = next_number(root, "decisions", "D", 2)
-    path = os.path.join(root, "decisions", "%s-%s.yaml" % (ident, a.slug))
-    fields = [("id", ident), ("title", a.title), ("status", "open"), ("date", today()), ("context", []),
-              ("born_from", split_refs(a.born_from)), ("discuss_with", split_refs(a.discuss_with)),
-              ("question", a.question)]
-    if a.requirement:
-        link_requirement(root, a.requirement, ident)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write("".join(l for k, v in fields for l in render(k, v)))
-    return "%s %s" % (ident, os.path.relpath(path, root))
-
-
-def link_requirement(root, req, decision):
-    path = os.path.join(root, "acs.yaml")
-    lines = read_lines(path)
-    blocks = flow.item_blocks(lines, "id", req)
-    if len(blocks) != 1:
-        raise Refusal("requirement %s is not defined in acs.yaml" % req)
-    start, end, indent = blocks[0]
-    flow.set_key(lines, start, end, indent, "decision", decision, after="text")
-    write_lines(path, lines, lambda d: True)
-
-
-def cmd_new_validation(root, a):
-    ident = next_number(root, "validations", "V", 2)
-    path = os.path.join(root, "validations", "%s-%s.yaml" % (ident, a.slug))
-    fields = [("id", ident), ("title", a.title), ("status", "pending"), ("date", None), ("where", a.where),
-              ("depends_on", []), ("how", a.how), ("expected", a.expected), ("evidence", ""), ("attachments", [])]
-    if a.decides:
-        fields.insert(6, ("decides", split_refs(a.decides)))
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write("".join(l for k, v in fields for l in render(k, v)))
-    return "%s %s%s" % (ident, os.path.relpath(path, root), " (spike)" if a.decides else "")
-
-
-def cmd_decide(root, a):
-    path = find_file(root, "decisions", a.id)
-    state = "proposed" if a.proposed else "decided"
-    current = doc(path).get("status")
-    if current in ("decided", "superseded", "dropped"):
-        raise Refusal("%s is %s; to change course write a new decision and `supersede` it" % (a.id, current))
-    if state == "decided" and not a.why:
-        raise Refusal("a decided decision needs --why (use --proposed to recommend without deciding)")
-
-    def change(lines):
-        put(lines, "status", state)
-        put(lines, "date", today(), after="status")
-        put(lines, "decision", a.decision, after="question")
-        if a.why:
-            put(lines, "why", a.why, after="decision")
-        if a.pr_note:
-            put(lines, "pr_note", a.pr_note)
-
-    mutate(path, change, lambda d: d.get("status") == state)
-    return "%s %s" % (a.id, state)
-
-
-def cmd_supersede(root, a):
-    old, new = find_file(root, "decisions", a.old), find_file(root, "decisions", a.new)
-
-    def old_change(lines):
-        put(lines, "status", "superseded")
-        put(lines, "date", today(), after="status")
-        put(lines, "superseded_by", a.new, after="born_from")
-
-    if not doc(old).get("decision"):
-        raise Refusal("%s has no decision to supersede; drop it instead" % a.old)
-    mutate(old, old_change, lambda d: d.get("superseded_by") == a.new)
-    mutate(new, lambda lines: put(lines, "supersedes", a.old, after="born_from"), lambda d: d.get("supersedes") == a.old)
-    return "%s superseded by %s" % (a.old, a.new)
-
-
-def cmd_validate(root, a):
-    path = find_file(root, "validations", a.id)
-    if doc(path).get("status") == "dropped":
-        raise Refusal("%s is dropped: what it proved left the task" % a.id)
-    if a.status in ("passed", "failed") and not (a.evidence or doc(path).get("evidence", "").strip()):
-        raise Refusal("%s needs --evidence: date, environment and output of the run" % a.status)
-
-    def change(lines):
-        put(lines, "status", a.status)
-        put(lines, "date", today(), after="status")
-        if a.evidence:
-            put(lines, "evidence", a.evidence)
-        if a.attach:
-            put(lines, "attachments", list(a.attach))
-
-    mutate(path, change, lambda d: d.get("status") == a.status)
-    return "%s %s" % (a.id, a.status)
-
-
-def cmd_close(root, a):
-    path = os.path.join(root, "pending.yaml")
-    lines = read_lines(path)
-    blocks = flow.item_blocks(lines, "id", a.id)
-    if len(blocks) != 1:
-        raise Refusal("%s is not defined in pending.yaml" % a.id)
-    start, end, indent = blocks[0]
-    current = next(i for i in yaml.safe_load("".join(lines)) if i.get("id") == a.id).get("status")
-    if current in ("done", "dropped"):
-        raise Refusal("%s is already %s" % (a.id, current))
-    flow.set_key(lines, start, end, indent, "status", a.status)
-    end = flow.block_end(lines, start, indent - 2)
-    flow.set_key(lines, start, end, indent, "closed", today(), after="status")
-    if a.link:
-        end = flow.block_end(lines, start, indent - 2)
-        flow.set_key(lines, start, end, indent, "link", scalar(a.link), after="closed")
-    write_lines(path, lines, lambda d: any(i.get("id") == a.id and i.get("status") == a.status for i in d))
-    return "%s %s" % (a.id, a.status)
-
-
-def sync_acs(root, check):
-    """Write each active requirement's and item's computed status into acs.yaml; returns the lines changed."""
-    path = os.path.join(root, "acs.yaml")
-    lines = read_lines(path)
-    before = list(lines)
-    for item in check.active_items():
-        wanted = [(item.get("id"), check.item_status(item))]
-        wanted += [(r.get("id"), check.req_status(r)) for r in status.lst(item.get("requirements"))]
-        for ident, state in wanted:
-            blocks = flow.item_blocks(lines, "id", str(ident))
-            if len(blocks) == 1:
-                start, end, indent = blocks[0]
-                flow.set_key(lines, start, end, indent, "status", state, after="text")
-    if lines != before:
-        write_lines(path, lines, lambda d: isinstance(d, list))
-    return len(lines) - len(before) + sum(1 for a, b in zip(before, lines) if a != b)
-
-
-def sync_all(root):
-    check = status.Task(root)
-    check.check()
-    changed = sync_acs(root, check)
-    flow.sync_roadmap(os.path.join(root, ".specs"))
-    return changed
-
-
-def cmd_sync(root, a):
-    return "sync: %d acs.yaml line(s) changed" % sync_all(root)
+def cmd_sync(loaded):
+    """Sync the loaded task (sync.py)."""
+    return "sync: %d acs.yaml line(s) changed" % task_sync.sync(loaded)
 
 
 def cmd_consolidate(root, a):
-    path = os.path.join(root, "brief.md")
-    if not os.path.isfile(path):
-        raise Refusal("brief.md does not exist yet: write it from templates/brief.md first")
-    lines = read_lines(path)
-    if not lines or lines[0].strip() != "---":
-        raise Refusal("brief.md has no YAML header")
-    close = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
-    if close is None:
-        raise Refusal("brief.md header is not closed")
-    head = lines[1:close]
-    put(head, "date", today())
-    lines[1:close] = head
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write("".join(lines))
-    return "brief.md date %s" % today()
+    """consolidate with status.py's sources digest, looked up at each call (the tests patch it there)."""
+    return commands.cmd_consolidate(root, a, status.sources_digest)
+
+
+def cmd_new(root, a):
+    return {"decision": commands.cmd_new_decision, "validation": commands.cmd_new_validation,
+            "pending": commands.cmd_new_pending}[a.kind](root, a)
+
+
+# The edit each command makes before the load, the sync and the check.
+EDITS = {"journal": commands.cmd_journal, "new": cmd_new, "decide": commands.cmd_decide,
+         "supersede": commands.cmd_supersede, "validate": commands.cmd_validate, "close": commands.cmd_close,
+         "consolidate": cmd_consolidate}
 
 
 def build_parser():
@@ -398,24 +118,33 @@ def build_parser():
 
 
 def main(argv=None):
+    try:
+        return run(argv)
+    except yamlio.YamlError as exc:
+        raise SystemExit(str(exc))
+
+
+def run(argv):
     args = build_parser().parse_args(argv)
     root = os.path.abspath(args.task)
     if not os.path.isfile(os.path.join(root, "acs.yaml")):
         print("ERROR: %s has no acs.yaml; not a task folder" % root)
         return 2
-    handler = {"journal": cmd_journal, "decide": cmd_decide, "supersede": cmd_supersede,
-               "validate": cmd_validate, "close": cmd_close, "consolidate": cmd_consolidate,
-               "sync": cmd_sync,
-               "new": lambda r, a: {"decision": cmd_new_decision, "validation": cmd_new_validation,
-                                    "pending": cmd_new_pending}[a.kind](r, a)}[args.command]
+    # The command edits its own file; then the task is loaded once, synced from that load, and the
+    # check runs over the same load, which holds what sync wrote. `sync` has no edit of its own.
     try:
-        print(handler(root, args))
-    except Refusal as exc:
+        if args.command == "sync":
+            loaded = status.Task(root)
+            print(cmd_sync(loaded))
+        else:
+            print(EDITS[args.command](root, args))
+    except (commands.Refusal, ye.EditError) as exc:
         print("ERROR: %s" % exc)
         return 1
     if args.command != "sync":
-        sync_all(root)
-    check = status.Task(root)
+        loaded = status.Task(root)
+        task_sync.sync(loaded)
+    check = status.Task(root, loaded.model)
     check.check()
     for failure in check.failures:
         print("FAIL: %s" % failure)

@@ -15,7 +15,7 @@ A task folder records the facts, decisions, plan and proof behind one piece of w
 | `validations/evidence/` | any | logs and screenshots a validation lists in `attachments` |
 | `pending.yaml` | YAML | actions with other people or tasks (`P-n`) |
 | `journal.yaml` | YAML | events in date order (`J-nnn`) |
-| `brief.md` | md + YAML header | the consolidated view: today, target, path, open items |
+| `brief.md` | md + YAML header | the consolidated view: today, target, path, open items. Header: `code`, `title`, `date`, and `sources` (one hash per group of files it summarises, see Brief sources). BRIEF-2 holds the requirements block and BRIEF-4 the open-items block, both written by `task.py` and never by hand (see Brief requirements, Brief open items) |
 | `.specs/` | `/flow` | `roadmap.yaml` and `features/<id>/` with `spec.md` and `feature.yaml` |
 | `repos/<repo>/` | git worktree | the code, on the task's branch; ignored by the home repo and by `status.py` |
 
@@ -54,7 +54,8 @@ Each link is written in one place; `status.py` derives the reverse:
 
 - Each context file declares an upper-case `code` in its header, and each heading carries the id: `## NOW-7 Firewall today`, `### NOW-7.2 Docker bypasses ufw`.
 - Ids are permanent: a new item takes the next free number; existing ones never move, even when the order looks odd.
-- Cite by id in plain text: `see D-12`, `(NOW-7.2)`.
+- Cite by id in plain text: `see D-12`, `(NOW-7.2)`. `status.py` fails on a cited id that does not exist, in any file.
+- `brief.md` cites only what still holds: `status.py` also fails when it cites a `superseded` decision (naming the active end of its `superseded_by` chain), a `dropped` decision, a `dropped` item or a requirement of one. Other files may cite them as history; the brief says it in words.
 - Ids stay inside the task folder. Code, commits and the PR carry the reason in words, never the id.
 
 ## Requirements and the decision tree
@@ -97,6 +98,101 @@ Requirement status:
 | `decided` | tree all `decided`; some decision with `needs_code` (default true) has no `/flow` feature, or one not `done` |
 | `built` | every needed feature `done`; some validation has not `passed` |
 | `concluded` | every validation of the requirement `passed` |
+
+What each requirement still misses follows its status: `discovery` the missing root decision or validation; `deciding` each decision of its tree not `decided` (with `discuss_with` and the spikes it awaits); `decided` each decision needing code with no feature, and each linked feature not `done`; `built` each validation not `passed`. `status.py` prints it in the **Missing** column and in `--json`.
+
+## Step
+
+The `/task` step comes from the folder: `status.py` prints it on its first line (`Step: <step> - <reason>`) and in `--json`. The first rule that holds wins:
+
+| Step | When |
+|---|---|
+| `decide` | a decision `open` or `proposed`, not awaiting a spike and not in the `refs` of an open pending item |
+| `consolidate` | no `brief.md`, no `date` or `sources` map in it, or a group of sources whose hash differs from the one stamped in it |
+| `plan` | no `.specs/roadmap.yaml` |
+| `spike` | a spike `pending` or `failed` blocks a feature not `done` |
+| `build` | a `feature.yaml`, or a roadmap feature without one, not `done` |
+| `review` | an item not `concluded` and without a `pr_note` |
+| `done` | the README lists repos and none has a `worktree` (finish clears them) |
+| `pr` | a feature without a `pr` link |
+| `finish` | otherwise: every feature has a PR and a worktree remains |
+
+Whether a PR is merged is not read: check it before `finish`.
+
+Beside the reason, `--json` gives the step's `blockers` as data, the same entities the reason names, and `your_turn`. The reason is worded from them:
+
+| Step | Each blocker (`id`, `kind`, `state`) |
+|---|---|
+| `decide` | a decision, `decision`, `open` or `proposed` |
+| `consolidate` | `brief.md`, `brief`, `missing`, `no-date` or `no-sources`; or each changed group, `source`, `changed` |
+| `plan` | `roadmap.yaml`, `roadmap`, `missing` |
+| `spike` | a spike, `spike`, `pending` or `failed` |
+| `build` | a feature (or a roadmap feature without a file), `feature`, its status |
+| `review` | an item, `item`, its status |
+| `pr` | a feature, `feature`, `no-pr` |
+| `finish` | a repo, `repo`, `worktree` |
+| `done` | none |
+
+Each blocker also has `waiting`: `true` when it waits on someone else, because its id is in the `refs` of an open pending item, or it is a decision `proposed` whose `discuss_with` names someone and not `me`, or it is an item where everything its requirements miss (see Status) waits by those two rules. An item with nothing missing, or missing something that names no id (no root decision, no validation), does not wait.
+
+`your_turn` says whether the next action is the user's: always on `consolidate`, `plan`, `build`, `pr` and `finish`; on `decide`, `spike` and `review` when some blocker is not `waiting`; never on `done`. A failure of the checks makes it `true` on any step.
+
+### Brief sources
+
+`task.py consolidate` stamps `sources` in the brief header: one 12-hex hash per group, over what a person writes and never over what a script stamps.
+
+```yaml
+date: 2026-11-19
+sources:
+  context: "3f9a1c07be52"
+  acs: "9d2e4b60a1f7"
+  decisions: "c18b7a5e0d34"
+```
+
+| Group | Hashed |
+|---|---|
+| `context` | the text of `context/*.md` without its `read_on` line; `context/archive/` is left out |
+| `acs` | per item and requirement: `id`, `text`, `decision`, `validations`, and whether an item is `dropped`; never a derived `status` |
+| `decisions` | per decision: `id`, `title`, `status`, `question`, `decision`, `why`, `consequences` and each option's `name` and `status`; never `date` |
+
+Line endings and the layout of the YAML do not change a hash. A group that differs sends the task to `consolidate`, and the Step line names it (`context, decisions changed after brief.md`); a brief with no `sources` says `brief.md has no sources`. Pending items, the roadmap, validations, the journal and the README are not hashed.
+
+### Brief requirements
+
+BRIEF-2 starts with a block that every `task.py` command rewrites from `acs.yaml`: each item, in file order, and under it each of its requirements with its root decision, each text on one line (newlines and runs of spaces become one space). Items and requirements that are `dropped` stay out. A root that is `superseded` shows the active end of its `superseded_by` chain, and `(no active root)` when the chain ends in a dropped decision or nowhere. The hand-written target goes below it; nothing between the markers is edited by hand.
+
+```markdown
+## BRIEF-2 Target
+
+<!-- task:generated requirements -->
+- **AC-1** Users get the report out of the app
+  - AC-1.1 (D-01) The report downloads as CSV
+<!-- /task:generated -->
+
+Where the target departs from the AC text, written by hand.
+```
+
+With no item or requirement left, the block holds `None: acs.yaml has no requirements.` The markers, the insertion under a `## BRIEF-2` heading that has none, and the failures of `status.py` (`block requirements is stale`, no block, no BRIEF-2 heading) work as for the open items below. A block whose end marker is gone fails `status.py` (`has no end marker`), and `task.py` leaves the brief as it is until it is fixed by hand.
+
+### Brief open items
+
+BRIEF-4 starts with a block that every `task.py` command rewrites from the decisions and `pending.yaml`: the open and proposed decisions and the open pending items, grouped by person like the Agenda of `status.py`. Hand prose (follow-ups, notes out of scope) goes below it; nothing between the markers is edited by hand.
+
+```markdown
+## BRIEF-4 Open items
+
+<!-- task:generated open-items -->
+**me**
+- D-07 (proposed) Lock the PR - awaiting spike V-03
+
+**PO**
+- P-2 (pending) Ask for the vCenter snapshot
+<!-- /task:generated -->
+
+Follow-ups written by hand.
+```
+
+With nothing open, the block holds `None: no decision is open or proposed and no pending item is open.` A brief with a `## BRIEF-4` heading and no markers gets the block inserted under the heading at the next `task.py` command. `status.py` fails when the block differs from what the folder gives (`block open-items is stale`), when the markers are missing, or when the brief has no BRIEF-4 heading to hold them; `task.py sync` fixes the first two. Every byte outside the markers stays as written.
 
 ## Decisions
 
