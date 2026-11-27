@@ -1,8 +1,9 @@
 """Checks skills.yaml, the record of each own skill and the skills it was built from.
 
-Usage: python scripts/skills.py [--root DIR] validate | credits [--write] | test-cmd <skill>
+Usage: python scripts/skills.py [--root DIR] validate | credits [--write] | test-cmd <skill> | test-cmds
 """
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -21,6 +22,11 @@ def load(root):
 
 def own_entries(manifest):
     return manifest.get("own") or []
+
+
+def skill_test_cmds(manifest):
+    """Each own skill's name mapped to its test command, "" when it has none."""
+    return {e.get("name"): e.get("test") or "" for e in own_entries(manifest)}
 
 
 def reference_errors(skill, i, ref, own_names):
@@ -137,6 +143,7 @@ def main(argv=None):
     credits_cmd.add_argument("--write", action="store_true")
     test_cmd = sub.add_parser("test-cmd")
     test_cmd.add_argument("skill")
+    sub.add_parser("test-cmds")
     args = parser.parse_args(argv)
 
     if args.cmd == "validate":
@@ -160,12 +167,16 @@ def main(argv=None):
         readme_path.write_text(updated, encoding="utf-8", newline="\n")
         return 0
     if args.cmd == "test-cmd":
-        for entry in own_entries(load(args.root)):
-            if entry.get("name") == args.skill:
-                print(entry.get("test") or "")
-                return 0
+        cmds = skill_test_cmds(load(args.root))
+        if args.skill in cmds:
+            print(cmds[args.skill])
+            return 0
         print(f"{args.skill}: not an own skill", file=sys.stderr)
         return 1
+    if args.cmd == "test-cmds":
+        # One call for every skill, so the pre-commit hook starts one process instead of one per skill.
+        print(json.dumps(skill_test_cmds(load(args.root))))
+        return 0
 
 
 if __name__ == "__main__":

@@ -34,7 +34,7 @@ Steps for a fresh clone or a new machine. Each one can run again on a machine al
    cp -n ~/Projects/skills/skills/session-log/config.example.yaml ~/Projects/skills/skills/session-log/config.yaml
    ```
 
-6. Show the `retro-report` band, which offers a retro once `threshold` sessions wait for one: add the skill's mod to the `env` block of `~/.claude/settings.json`, so every session loads it (and reloads it when a file changes):
+6. Show the `retro-report` band, which offers a retro on today's sessions the triage (step 7) judged worth one and no retro has read yet, the first of them per press: add the skill's mod to the `env` block of `~/.claude/settings.json`, so every session loads it (and reloads it when a file changes):
 
    ```json
    "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/skills/retro-report/mod" }
@@ -54,7 +54,7 @@ Steps for a fresh clone or a new machine. Each one can run again on a machine al
 
    Keep any `SessionEnd` hooks already there, as other entries of the list.
 
-8. Enable the pre-commit hook. It checks `skills.yaml` and runs the tests of the repo scripts and of each skill a commit touches (each skill's command is its `test:` in `skills.yaml`). It needs [uv](https://docs.astral.sh/uv/), `python3` and the `claude` CLI:
+8. Enable the pre-commit hook. It checks `skills.yaml` and runs the tests of the repo scripts, of each skill a commit touches (each skill's command is its `test:` in `skills.yaml`) and of each tool under `tools/` (its `test.cmd`). It needs [uv](https://docs.astral.sh/uv/), `python3` and the `claude` CLI:
 
    ```sh
    git -C ~/Projects/skills config core.hooksPath .githooks

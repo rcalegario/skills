@@ -6,7 +6,7 @@
 
 own:
   - name: flow
-    test: uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts
+    test: uv run --no-project --with pytest --with pytest-xdist --with pyyaml python -m pytest -q -n auto scripts
     references:
       - repo: https://github.com/tech-leads-club/agent-skills
         path: packages/skills-catalog/skills/(development)/tlc-spec-driven
@@ -54,25 +54,13 @@ own:
     references: []
 
   - name: retro-report
-    test: uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts && claude plugin test mod
+    test: uv run --no-project --with pytest --with pytest-xdist --with pyyaml python -m pytest -q -n auto scripts && claude plugin test mod
     references:
       - repo: https://github.com/mattpocock/skills
         path: skills/engineering/retro
         commit: 5863806dd4e1
         relation: derived
         took: The improvement categories a retro looks for and who fixes what, implementation or review
-      - repo: https://github.com/microsoft/TokenEconomizer
-        path: tokeneconomizer/trace
-        commit: 7042ea8
-        license: Apache-2.0
-        relation: inspired
-        took: Reading a Claude Code transcript as an ordered list of tool calls with their results
-      - repo: https://github.com/microsoft/TokenEconomizer
-        path: tokeneconomizer/microskills/observe.py
-        commit: 7042ea8
-        license: Apache-2.0
-        relation: inspired
-        took: Classifying a command's output into error classes by pattern
 
   - name: session-log
     test: uv run --no-project --with pytest --with pyyaml python -m pytest -q -p no:cacheprovider scripts
