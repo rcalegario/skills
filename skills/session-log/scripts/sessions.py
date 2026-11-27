@@ -3,16 +3,28 @@
   sessions.py extract [log ...]   write <out>/<local start date>/<session-id>.yaml for each named log; with
                                   none, for every session log under ~/.claude/projects whose file is missing
                                   or older than the log
-  sessions.py extract --hook      the same for the log named by the SessionEnd hook JSON on stdin; never fails
+  sessions.py extract <id> ...    the same for each session id or unique prefix, only when its file is missing
+                                  or stale; exit 1 when an id matches no log or a prefix matches several
+  sessions.py extract ... --print-path
+                                  print only the path of each named session's file, one per line
+  sessions.py extract --hook     the same for the log named by the SessionEnd hook JSON on stdin; never fails
   sessions.py extract --hook --print-path
                                   the same, printing only the written file's path (nothing on failure), so the
                                   hook can pipe it into another script
+  sessions.py transcript <id>     print the session's conversation, compact: prompts and agent text whole,
+                                  thinking and call results cut, calls numbered as the session file numbers
+                                  them, skills, compactions, interruptions and subagents one line each
+    --agent <id>                  a subagent's log instead, with its own call numbers
+    --from N --to M               only calls N to M and what lies between them
+    --full                        nothing cut
+    --lines N                     thinking lines and result lines kept at each end (default 3); an error
+                                  result always keeps its first 20 lines
 
 Every file is read and written as UTF-8, whatever the locale.
 Reads config.yaml beside this skill's SKILL.md (see config.example.yaml), or --config.
-The digest functions are a copy of retro-report's retro.py.
 """
 import argparse
+import glob
 import json
 import os
 import re
@@ -38,6 +50,12 @@ ERROR_PATTERNS = [
 LINE_MAX = 200
 INPUT_MAX = 120
 STREAK_MIN = 3
+# transcript: lines kept of thinking and of each end of a result, lines of an error, characters of an input.
+TRANSCRIPT_LINES = 3
+ERROR_LINES = 20
+INPUT_LINE_MAX = 200
+PROJECTS = Path.home() / ".claude" / "projects"
+CALL_INPUT_FIELDS = ("command", "file_path", "notebook_path", "pattern", "url", "query", "skill", "description")
 # Search tools, each with the input field that names what it searched.
 SEARCH_TOOL_FIELD = {"Grep": "pattern", "Glob": "pattern", "Read": "file_path"}
 SEARCH_HEADS = {"grep", "rg", "find", "ls", "cat", "head", "tail", "sed", "wc"}
@@ -66,6 +84,7 @@ NOT_TYPED = ("<local-command-stdout>", "<local-command-stderr>", "<bash-stdout>"
 
 COMMAND_NAME = re.compile(r"<command-name>/?([^<]+)</command-name>")
 COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
+TASK_ID = re.compile(r"<task-id>([^<]+)</task-id>")
 SKILL_BODY = "Base directory for this skill"
 
 
@@ -92,7 +111,7 @@ def read_records(path):
 
 
 def calls(records):
-    """Ordered tool calls: {n, tool, input, result, is_error}, results paired by tool_use id. Only the
+    """Ordered tool calls: {n, id, tool, input, result, is_error}, results paired by tool_use id. Only the
     conversation's own records count: others, like api-request-blob, repeat its content."""
     out, by_id = [], {}
     for rec in records:
@@ -103,7 +122,8 @@ def calls(records):
             continue
         for block in content:
             if block.get("type") == "tool_use":
-                call = {"n": len(out) + 1, "tool": block.get("name"), "input": block.get("input") or {},
+                call = {"n": len(out) + 1, "id": block.get("id"), "tool": block.get("name"),
+                        "input": block.get("input") or {},
                         "result": "", "is_error": False}
                 out.append(call)
                 by_id[block.get("id")] = call
@@ -389,12 +409,18 @@ def _time(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
+def _stamps(records):
+    """The timestamps of the records, in time order."""
+    return sorted((r["timestamp"] for r in records if r.get("timestamp")), key=_time)
+
+
 def _iso(ts):
     return _time(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def digest(paths):
-    """One session from its logs (one per project folder it ran in), joined in order of their first record."""
+def session_records(paths):
+    """The records of one session's logs (one per project folder it ran in), joined in order of their first
+    record. Every reader of a session starts here, so call numbers agree. Raises NotASessionLog when none is."""
     parts = []
     for path in paths:
         try:
@@ -406,10 +432,15 @@ def digest(paths):
             parts.append((min(stamps), records))
     if not parts:
         raise NotASessionLog(paths[0])
-    records = [r for _, recs in sorted(parts, key=lambda part: part[0]) for r in recs]
+    return [r for _, recs in sorted(parts, key=lambda part: part[0]) for r in recs]
+
+
+def digest(paths):
+    """One session from its logs, joined by session_records."""
+    records = session_records(paths)
     session = next((r["sessionId"] for r in records if r.get("sessionId")), Path(paths[0]).stem)
     project = next((r["cwd"] for r in records if r.get("cwd")), None)
-    stamps = sorted((r["timestamp"] for r in records if r.get("timestamp")), key=_time)
+    stamps = _stamps(records)
     call_list = calls(records)
     prompts = prompt_texts(records)
     commands = typed_commands(records)
@@ -445,6 +476,163 @@ def digest(paths):
         "api_errors": field_counts(records, "error", lambda r: r.get("isApiErrorMessage")),
         "prs": prs(records),
     }
+
+
+def _clock(rec):
+    return _time(rec["timestamp"]).strftime("%H:%M:%S") if rec.get("timestamp") else "--:--:--"
+
+
+def _indent(lines):
+    return ["  " + line for line in lines]
+
+
+def _one_line(text, limit):
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def call_input(c):
+    """What a call asked for, for a reader: the command, the path or pattern, else the input as JSON."""
+    inp = c["input"]
+    for key in CALL_INPUT_FIELDS:
+        if isinstance(inp.get(key), str):
+            return inp[key]
+    return json.dumps(inp, sort_keys=True, ensure_ascii=False)
+
+
+def result_lines(c, lines):
+    """A call's result cut for reading: head and tail on success, the first ERROR_LINES on an error; whole
+    when lines is None."""
+    text = c["result"].splitlines()
+    if lines is None:
+        return text
+    if c["is_error"]:
+        more = len(text) - ERROR_LINES
+        return text[:ERROR_LINES] + ([f"… {more} more lines"] if more > 0 else [])
+    if len(text) <= 2 * lines:
+        return text
+    return text[:lines] + [f"… {len(text) - 2 * lines} lines …"] + text[-lines:]
+
+
+def _lines_label(text):
+    return f"({len(str(text).splitlines())} lines)"
+
+
+def marker_lines(rec):
+    """The one line (or the queued prompt, whole) a non-message record leaves in a transcript, else []."""
+    clock = f"[{_clock(rec)}]"
+    if rec.get("type") == "system" and rec.get("subtype") == "compact_boundary":
+        meta = rec.get("compactMetadata") or {}
+        return [f"{clock} ── compacted ({meta.get('trigger')}, {meta.get('preTokens')} → {meta.get('postTokens')} "
+                f"tokens) ──"]
+    a = rec.get("attachment") if rec.get("type") == "attachment" else None
+    if not isinstance(a, dict):
+        return []
+    if a.get("type") == "edited_text_file":
+        return [f"{clock} edited {a.get('filename')} {_lines_label(a.get('snippet', ''))}"]
+    if a.get("type") == "nested_memory":
+        return [f"{clock} memory {a.get('path')} {_lines_label((a.get('content') or {}).get('content', ''))}"]
+    if a.get("type") == "queued_command":
+        origin, prompt = a.get("origin") or {}, a.get("prompt")
+        prompt = prompt if isinstance(prompt, str) else json.dumps(prompt, ensure_ascii=False)
+        if origin.get("kind", "human") != "human":
+            return relayed(clock, origin, origin.get("handbackReportText") or prompt)
+        return [f"{clock} user (queued)", *_indent(prompt.splitlines())]
+    return []
+
+
+def relayed(clock, origin, text):
+    """One line for a message relayed to the session by a subagent or a background task, not typed."""
+    if origin.get("handback") or origin.get("kind") == "peer":
+        return [f"{clock} hand-back from agent {origin.get('from')} {_lines_label(text)}"]
+    task = TASK_ID.search(text)
+    name = f" {task.group(1)}" if task else ""
+    return [f"{clock} {str(origin.get('kind')).replace('-', ' ')}{name} {_lines_label(text)}"]
+
+
+def agent_ids(records):
+    """The subagent each Agent call started: tool_use id -> agent id, read off the result record."""
+    out = {}
+    for rec in records:
+        agent = (rec.get("toolUseResult") or {}).get("agentId") if isinstance(rec.get("toolUseResult"), dict) else None
+        content = (rec.get("message") or {}).get("content")
+        if agent and isinstance(content, list):
+            out.update({b.get("tool_use_id"): agent for b in content if b.get("type") == "tool_result"})
+    return out
+
+
+def call_lines(c, clock, lines, agents):
+    """A call's head line, then its result; whole (the input on its own lines) when lines is None."""
+    inp = call_input(c).splitlines() or [""]
+    first = _one_line(" ".join(inp), INPUT_LINE_MAX) if lines is not None else inp[0]
+    rest = [f"> {line}" for line in inp[1:]] if lines is None else []
+    tail = f" → agent {agents[c['id']]}" if c["id"] in agents else ""
+    head = f"[{clock}] #{c['n']} {c['tool']} {first}{' error' if c['is_error'] else ''}{tail}"
+    return [head, *_indent(rest + result_lines(c, lines))]
+
+
+def entries(records, lines, agents):
+    """The transcript as (call number or None, lines) entries, in log order."""
+    by_id = {c["id"]: c for c in calls(records)}
+    out = []
+    for rec in records:
+        kind = rec.get("type")
+        if kind not in ("user", "assistant"):
+            out.append((None, marker_lines(rec)))
+            continue
+        clock = _clock(rec)
+        if kind == "user":
+            text = prompt_text(rec)
+            body = user_text(rec) if rec.get("isMeta") else None
+            origin = rec.get("origin") or {}
+            if origin.get("kind", "human") != "human" and not rec.get("isCompactSummary"):
+                out.append((None, relayed(f"[{clock}]", origin, user_text(rec) or "")))
+            elif text and text.startswith(INTERRUPTED):
+                out.append((None, [f"[{clock}] ── interrupted ──"]))
+            elif text and text.startswith(NOT_TYPED):
+                continue
+            elif text:
+                out.append((None, [f"[{clock}] user", *_indent(text.splitlines())]))
+            elif body and body.startswith(SKILL_BODY):
+                name = re.split(r"[\\/]", body.splitlines()[0].removeprefix(SKILL_BODY).strip(" :"))[-1]
+                out.append((None, [f"[{clock}] skill {name} {_lines_label(body)}"]))
+            continue
+        content = (rec.get("message") or {}).get("content")
+        for block in content if isinstance(content, list) else []:
+            if block.get("type") == "text" and block.get("text", "").strip():
+                out.append((None, [f"[{clock}] agent", *_indent(block["text"].splitlines())]))
+            elif block.get("type") == "thinking" and block.get("thinking", "").strip():
+                text = block["thinking"].splitlines()
+                keep = len(text) if lines is None else lines
+                more = f" (+{len(text) - keep} lines)" if len(text) > keep else ""
+                out.append((None, [f"[{clock}] thinking{more}", *_indent(text[:keep])]))
+            elif block.get("type") == "tool_use" and block.get("id") in by_id:
+                c = by_id[block["id"]]
+                out.append((c["n"], call_lines(c, clock, lines, agents)))
+    return out
+
+
+def transcript(records, lines=TRANSCRIPT_LINES, first=None, last=None):
+    """The conversation of a session as text lines, in log order: typed prompts and agent text whole, thinking
+    cut to its first lines, each call numbered as calls() numbers it, its result cut; skills, edited files,
+    memories, hand-backs, compactions and interruptions one line each. Other records (api-request blobs,
+    hooks, snapshots) and harness notes print nothing. lines None prints all in full; first and last keep
+    the entries from call first to call last."""
+    items = entries(records, lines, agent_ids(records))
+    numbers = [i for i, (n, _) in enumerate(items) if n is not None]
+    lo = next((i for i in numbers if items[i][0] >= first), len(items)) if first else 0
+    hi = max((i for i in numbers if items[i][0] <= last), default=-1) + 1 if last else len(items)
+    return [line for _, block in items[lo:hi] for line in block]
+
+
+def transcript_header(records, metrics, agent=None):
+    """session, the subagent when one is read (id, type and description), project, span and metrics file."""
+    stamps = _stamps(records)
+    return [f"session  {next((r['sessionId'] for r in records if r.get('sessionId')), '')}",
+            *([f"agent    {agent}"] if agent else []),
+            f"project  {next((r['cwd'] for r in records if r.get('cwd')), '')}",
+            f"span     {_iso(stamps[0])} → {_iso(stamps[-1])}" if stamps else "span",
+            f"metrics  {metrics[0] if metrics else '(not written)'}", ""]
 
 
 def load_config(path):
@@ -504,15 +692,28 @@ def is_fresh(out, session, logs):
     return any(f.stat().st_mtime >= newest for f in session_files(out, session))
 
 
-def extract(out, logs, projects):
-    """Write the file of each named log, or with none, of every session log under projects whose file is
-    missing or stale. Returns (written, up to date, not session logs)."""
+def resolve(name, projects):
+    """The one session id under projects whose log name starts with name; ValueError when none or several."""
+    ids = sorted({log.stem for log in long_path(projects).glob(f"*/{glob.escape(name)}*.jsonl")})
+    if not ids:
+        raise ValueError(f"no session log matches {name}")
+    if len(ids) > 1:
+        raise ValueError(f"ambiguous {name}: {', '.join(ids)}")
+    return ids[0]
+
+
+def extract(out, logs, projects, ids=()):
+    """Write the file of each named log, and of each named session id whose file is missing or stale; with
+    neither, of every session log under projects whose file is missing or stale. Returns (written, up to
+    date, not session logs)."""
     # A session id has a log in each project folder it ran in (a moved project): its file joins them all.
     groups = {}
     logs, projects = [long_path(log) for log in logs], long_path(projects)
-    for log in logs or sorted(projects.glob("*/*.jsonl")):
+    named = logs + [log for s in ids for log in sorted(projects.glob(f"*/{s}.jsonl"))]
+    for log in named or sorted(projects.glob("*/*.jsonl")):
         groups.setdefault(log.stem, {log}).update(projects.glob(f"*/{log.stem}.jsonl"))
-    fresh = set() if logs else {s for s, group in groups.items() if is_fresh(out, s, group)}
+    always = {log.stem for log in logs}
+    fresh = {s for s, group in groups.items() if s not in always and is_fresh(out, s, group)}
     count = Counter(write_session(out, s, sorted(group)) for s, group in groups.items() if s not in fresh)
     return count[True], len(fresh), count[False]
 
@@ -538,24 +739,85 @@ def hook(config, projects, print_path=False):
     return 0
 
 
+def subagent_log(logs, agent):
+    """The records of a session's subagent log, and its header label (id, type and description from its meta
+    file). Raises NotASessionLog when no log of the session has that subagent."""
+    for log in logs:
+        path = log.parent / log.stem / "subagents" / f"agent-{agent}.jsonl"
+        if not path.is_file():
+            continue
+        records = read_records(path)
+        try:
+            meta = json.loads(path.with_suffix(".meta.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        label = f"{agent} ({meta.get('agentType')}: {meta.get('description')})" if meta else agent
+        return records, label
+    raise NotASessionLog(agent)
+
+
+def print_transcript(args):
+    """The transcript command: the session's header, then its conversation, as UTF-8 whatever the console."""
+    try:
+        session = resolve(args.session, args.projects)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 1
+    projects = long_path(args.projects)
+    logs = sorted(projects.glob(f"*/{session}.jsonl"))
+    try:
+        records, agent = session_records(logs), None
+    except NotASessionLog:
+        print(f"not a session log: {session}", file=sys.stderr)
+        return 1
+    if args.agent:
+        try:
+            records, agent = subagent_log(logs, args.agent)
+        except NotASessionLog:
+            print(f"no subagent {args.agent} in {session}", file=sys.stderr)
+            return 1
+    out, problem = load_config(args.config)
+    metrics = session_files(out, session) if not problem else []
+    lines = None if args.full else args.lines
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    body = transcript(records, lines, args.start, args.to)
+    print(*transcript_header(records, metrics, agent), *body, sep="\n")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, default=Path(__file__).resolve().parent.parent / "config.yaml",
                         help="config.yaml to read (default: the one beside SKILL.md)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("extract", help="write the session file of each named log")
-    e.add_argument("logs", nargs="*", help="logs to write whatever their mtime (default: every stale one)")
+    e.add_argument("logs", nargs="*", metavar="log|id",
+                   help="logs to write whatever their mtime, or session ids (or unique prefixes) to write when "
+                        "missing or stale (default: every stale log)")
     e.add_argument("--hook", action="store_true",
                    help="SessionEnd hook: read the log from the hook JSON on stdin; never exit non-zero")
     e.add_argument("--print-path", action="store_true",
-                   help="with --hook: print only the written file's path, nothing on failure")
-    e.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects",
+                   help="print only the path of each named session's file (with --hook: nothing on failure)")
+    e.add_argument("--projects", type=Path, default=PROJECTS,
                    help="folder of the project log folders (default: ~/.claude/projects)")
+    t = sub.add_parser("transcript", help="print a session's conversation, compact, with its call numbers")
+    t.add_argument("session", metavar="id", help="session id or unique prefix")
+    t.add_argument("--projects", type=Path, default=PROJECTS,
+                   help="folder of the project log folders (default: ~/.claude/projects)")
+    t.add_argument("--agent", metavar="id", help="print this subagent's log instead, with its own call numbers")
+    t.add_argument("--from", dest="start", type=int, metavar="N", help="start at call N")
+    t.add_argument("--to", type=int, metavar="M", help="end after call M")
+    t.add_argument("--full", action="store_true", help="truncate nothing")
+    t.add_argument("--lines", type=int, default=TRANSCRIPT_LINES, metavar="N",
+                   help=f"thinking lines and result lines kept at each end (default: {TRANSCRIPT_LINES})")
     args = parser.parse_args(argv)
+    if args.cmd == "transcript":
+        if args.lines < 1:
+            parser.error("--lines must be 1 or more")
+        return print_transcript(args)
     if args.hook and args.logs:
         parser.error("--hook reads its log from stdin: name no logs")
-    if args.print_path and not args.hook:
-        parser.error("--print-path works only with --hook")
 
     if args.hook:
         return hook(args.config, args.projects, args.print_path)
@@ -563,8 +825,24 @@ def main(argv=None):
     if problem:
         print(problem, file=sys.stderr)
         return 1
-    written, fresh, skipped = extract(out, [Path(name) for name in args.logs], args.projects)
-    print(f"{written} written, {fresh} up to date, {skipped} not session logs")
+    logs, ids, sessions = [], [], []
+    try:
+        for name in args.logs:
+            if name.endswith(".jsonl") or long_path(name).is_file():
+                logs.append(Path(name))
+                sessions.append(Path(name).stem)
+            else:
+                ids.append(resolve(name, args.projects))
+                sessions.append(ids[-1])
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 1
+    written, fresh, skipped = extract(out, logs, args.projects, ids)
+    if args.print_path:
+        for s in sessions:
+            print(*session_files(out, s), sep="\n")
+    else:
+        print(f"{written} written, {fresh} up to date, {skipped} not session logs")
     return 0
 
 

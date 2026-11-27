@@ -647,11 +647,51 @@ def test_hook_prints_no_path_on_failure(tmp_path, capsys, monkeypatch):
         assert len(err.strip().splitlines()) == 1, (stdin, err)
 
 
-def test_print_path_needs_hook(tmp_path, capsys):
-    with pytest.raises(SystemExit) as exc:
-        sessions.main(["--config", str(config(tmp_path)), "extract", "--print-path"])
-    assert exc.value.code == 2
-    assert "--print-path" in capsys.readouterr().err
+def by_id(tmp_path, capsys, *args):
+    return run(capsys, "--config", str(config(tmp_path)), "extract", *args, "--projects", str(tmp_path / "projects"))
+
+
+def test_extract_by_id_writes_when_missing_or_stale(tmp_path, capsys):
+    sid = "ab12cd34-0000-0000-0000-000000000001"
+    old = Log(sid=sid).prompt().bash("ls").write(tmp_path / "projects" / "-old" / f"{sid}.jsonl")
+    new = Log(cwd="/work/new", sid=sid).prompt("later").write(tmp_path / "projects" / "-new" / f"{sid}.jsonl")
+    os.utime(old, (100, 100)), os.utime(new, (100, 100))
+    out_file = tmp_path / "out" / "2026-11-14" / f"{sid}.yaml"
+    code, out, err = by_id(tmp_path, capsys, "ab12cd")
+    assert (code, err) == (0, "")
+    d = yaml.safe_load(out_file.read_text())
+    assert (d["session"], d["human_turns"], d["calls"]["total"]) == (sid, 2, 1)
+    out_file.write_text("fresh")
+    os.utime(out_file, (200, 200))
+    assert by_id(tmp_path, capsys, sid)[0] == 0
+    assert out_file.read_text() == "fresh"
+    os.utime(new, (300, 300))
+    assert by_id(tmp_path, capsys, sid)[0] == 0
+    assert yaml.safe_load(out_file.read_text())["session"] == sid
+
+
+def test_print_path_without_hook_prints_only_paths(tmp_path, capsys):
+    a, b = "aaaa1111-0000-0000-0000-000000000001", "bbbb2222-0000-0000-0000-000000000002"
+    Log(sid=a).prompt().write(tmp_path / "projects" / "-p" / f"{a}.jsonl")
+    log_b = Log(sid=b).prompt().write(tmp_path / "projects" / "-p" / f"{b}.jsonl")
+    code, out, err = by_id(tmp_path, capsys, "aaaa", str(log_b), "--print-path")
+    assert (code, err) == (0, "")
+    assert out.splitlines() == [str(tmp_path / "out" / "2026-11-14" / f"{s}.yaml") for s in (a, b)]
+
+
+def test_extract_unknown_id_exits_1(tmp_path, capsys):
+    Log(sid="aaaa1111").prompt().write(tmp_path / "projects" / "-p" / "aaaa1111.jsonl")
+    code, out, err = by_id(tmp_path, capsys, "ffff", "--print-path")
+    assert (code, out, err) == (1, "", "no session log matches ffff\n")
+    assert not (tmp_path / "out").exists()
+
+
+def test_extract_ambiguous_prefix_exits_1(tmp_path, capsys):
+    for sid in ("abc-1", "abc-2"):
+        Log(sid=sid).prompt().write(tmp_path / "projects" / "-p" / f"{sid}.jsonl")
+    Log(sid="abc-1").prompt().write(tmp_path / "projects" / "-q" / "abc-1.jsonl")
+    code, out, err = by_id(tmp_path, capsys, "abc")
+    assert (code, out, err) == (1, "", "ambiguous abc: abc-1, abc-2\n")
 
 
 def test_hook_without_pyyaml_exits_0():
@@ -681,3 +721,220 @@ def test_request_copies_are_not_calls(tmp_path, capsys):
     assert d["calls"] == {"total": 2, "by_tool": {"Bash": 1, "Skill": 1}}
     assert d["skills"] == {"tdd": 1}
     assert d["repeats"] == []
+
+
+def transcript(tmp_path, capsys, log, *args, write_metrics=False):
+    """Run transcript on a log written under tmp_path/projects; optionally extract its metrics file first."""
+    path = log.write(tmp_path / "projects" / "-work-repo" / f"{log.sid}.jsonl")
+    if write_metrics:
+        assert extract(tmp_path, capsys, path)[0] == 0
+    return run(capsys, "--config", str(config(tmp_path)), "transcript", log.sid, *args,
+               "--projects", str(tmp_path / "projects"))
+
+
+def think(log, text, msg_id="msg_t"):
+    log.records.append({"type": "assistant", "sessionId": log.sid, "cwd": log.cwd, "timestamp": log._ts(),
+                        "message": {"id": msg_id, "role": "assistant",
+                                    "content": [{"type": "thinking", "thinking": text, "signature": "x" * 50}]}})
+    return log
+
+
+def say(log, text):
+    log.records.append({"type": "assistant", "sessionId": log.sid, "cwd": log.cwd, "timestamp": log._ts(),
+                        "message": {"id": "msg_s", "role": "assistant", "content": [{"type": "text", "text": text}]}})
+    return log
+
+
+def test_transcript_header(tmp_path, capsys):
+    log = Log(sid="ab12-0001").prompt().bash("ls")
+    code, out, err = transcript(tmp_path, capsys, log)
+    assert (code, err) == (0, "")
+    assert out.splitlines()[:5] == ["session  ab12-0001", "project  /work/repo",
+                                    "span     2026-11-14T10:01:00Z → 2026-11-14T10:03:00Z",
+                                    "metrics  (not written)", ""]
+    code, out, err = transcript(tmp_path, capsys, log, write_metrics=True)
+    assert out.splitlines()[3] == f"metrics  {tmp_path / 'out' / '2026-11-14' / 'ab12-0001.yaml'}"
+
+
+def test_transcript_prompts_and_text_whole(tmp_path, capsys):
+    long_text = "\n".join(f"line {i}" for i in range(30))
+    log = Log().prompt("first ask\nwith two lines").bash("ls")
+    say(log, long_text)
+    log.user("<command-name>/x</command-name>", isMeta=True)       # harness note: not a prompt
+    log.prompt("second ask")
+    log.records.append({"type": "api-request-blob", "sessionId": log.sid, "timestamp": log._ts(),
+                        "message": {"role": "user", "content": "first ask repeated by a blob"}})
+    out = transcript(tmp_path, capsys, log)[1].splitlines()[5:]
+    assert out[:3] == ["[10:01:00] user", "  first ask", "  with two lines"]
+    i = out.index("[10:04:00] agent")
+    assert out[i + 1:i + 31] == [f"  line {n}" for n in range(30)]
+    assert out[i + 31:] == ["[10:06:00] user", "  second ask"]
+
+
+def test_transcript_thinking_truncated(tmp_path, capsys):
+    log = Log().prompt()
+    think(log, "\n".join(f"t{i}" for i in range(10)))
+    think(log, "", msg_id="msg_r")                                   # redacted: no text
+    think(log, "short\nthought", msg_id="msg_u")
+    out = transcript(tmp_path, capsys, log)[1].splitlines()[7:]
+    assert out == ["[10:02:00] thinking (+7 lines)", "  t0", "  t1", "  t2",
+                   "[10:04:00] thinking", "  short", "  thought"]
+
+
+def test_transcript_call_numbers_match_digest(tmp_path, capsys):
+    log = Log().prompt().bash("ls").bash("cat x", result="cat: x: No such file or directory", is_error=True)
+    log.call("Read", {"file_path": "/a/b.py"}).bash("echo " + "y" * 300)
+    d = digest(tmp_path, log, capsys)
+    out = transcript(tmp_path, capsys, log)[1].splitlines()
+    assert d["failures"]["file_missing"][0]["call"] == 2
+    assert "[10:04:00] #2 Bash cat x error" in out
+    assert "[10:06:00] #3 Read /a/b.py" in out
+    line = next(ln for ln in out if " #4 " in ln)
+    assert line == "[10:08:00] #4 Bash echo " + "y" * (200 - len("echo ") - 1) + "…"
+
+
+def test_transcript_result_head_and_tail(tmp_path, capsys):
+    log = Log().prompt().bash("seq 10", result="\n".join(str(i) for i in range(1, 11))).bash("seq 6", result="a\nb\nc\nd\ne\nf")
+    out = transcript(tmp_path, capsys, log)[1].splitlines()[7:]
+    assert out[:8] == ["[10:02:00] #1 Bash seq 10", "  1", "  2", "  3", "  … 4 lines …", "  8", "  9", "  10"]
+    assert out[8:] == ["[10:04:00] #2 Bash seq 6", "  a", "  b", "  c", "  d", "  e", "  f"]
+
+
+def test_transcript_error_result(tmp_path, capsys):
+    log = Log().prompt().bash("boom", result="\n".join(f"e{i}" for i in range(25)), is_error=True)
+    out = transcript(tmp_path, capsys, log)[1].splitlines()[7:]
+    assert out == ["[10:02:00] #1 Bash boom error", *[f"  e{i}" for i in range(20)], "  … 5 more lines"]
+
+
+def test_transcript_unknown_id_exits_1(tmp_path, capsys):
+    Log(sid="aaaa1111").prompt().write(tmp_path / "projects" / "-p" / "aaaa1111.jsonl")
+    for sid in ("abc-1", "abc-2"):
+        Log(sid=sid).prompt().write(tmp_path / "projects" / "-p" / f"{sid}.jsonl")
+    for name, msg in (("ffff", "no session log matches ffff\n"), ("abc", "ambiguous abc: abc-1, abc-2\n")):
+        code, out, err = run(capsys, "--config", str(config(tmp_path)), "transcript", name,
+                             "--projects", str(tmp_path / "projects"))
+        assert (code, out, err) == (1, "", msg)
+
+
+def test_transcript_joins_logs_across_folders(tmp_path, capsys):
+    sid = "join-1"
+    later = Log(cwd="/work/new", sid=sid)
+    later.n = 10                                                    # tool_use ids are unique across a session
+    later.prompt("later").bash("pwd").write(tmp_path / "projects" / "-new" / f"{sid}.jsonl")
+    early = Log(sid=sid).prompt("early").bash("ls")
+    for rec in early.records:
+        rec["timestamp"] = rec["timestamp"].replace("T10:", "T09:")
+    early.write(tmp_path / "projects" / "-old" / f"{sid}.jsonl")
+    out = run(capsys, "--config", str(config(tmp_path)), "transcript", sid,
+              "--projects", str(tmp_path / "projects"))[1]
+    assert out.index("  early") < out.index("#1 Bash ls") < out.index("  later") < out.index("#2 Bash pwd")
+
+
+def attach(log, kind, **fields):
+    return log.record(type="attachment", attachment={"type": kind, **fields})
+
+
+def test_transcript_skill_and_attachments_one_line(tmp_path, capsys):
+    log = Log().command("task", "x", skill=True)                     # 10:01 command, 10:02 skill body
+    attach(log, "edited_text_file", filename="/w/a.yaml", snippet="1\ta\n2\tb")
+    attach(log, "nested_memory", path="/w/CLAUDE.md", content={"path": "/w/CLAUDE.md", "content": "x\ny\nz"})
+    attach(log, "queued_command", prompt="also do this\nplease", commandMode="prompt")
+    attach(log, "queued_command", prompt="<agent-message>...", commandMode="prompt",
+           origin={"kind": "peer", "from": "a1b2", "handback": True, "handbackReportText": "r1\nr2"})
+    attach(log, "queued_command", prompt="<task-notification>\n<task-id>t9</task-id>\n</task-notification>",
+           commandMode="task-notification", origin={"kind": "task-notification"})
+    attach(log, "hook_success", content="", stdout="{}")
+    log.record(type="file-history-snapshot", snapshot={})
+    out = transcript(tmp_path, capsys, log)[1].splitlines()[5:]
+    assert out[4:] == ["[10:02:00] skill task (3 lines)", "[10:03:00] edited /w/a.yaml (2 lines)",
+                       "[10:04:00] memory /w/CLAUDE.md (3 lines)", "[10:05:00] user (queued)", "  also do this",
+                       "  please", "[10:06:00] hand-back from agent a1b2 (2 lines)",
+                       "[10:07:00] task notification t9 (3 lines)"]
+
+
+def test_transcript_compaction_and_interruption_marks(tmp_path, capsys):
+    log = Log().prompt()
+    log.record(type="system", subtype="compact_boundary",
+               compactMetadata={"trigger": "auto", "preTokens": 180000, "postTokens": 21000})
+    log.user("This session is being continued... the summary", isCompactSummary=True)
+    log.user([{"type": "text", "text": "[Request interrupted by user]"}])
+    out = transcript(tmp_path, capsys, log)[1].splitlines()[7:]
+    assert out == ["[10:02:00] ── compacted (auto, 180000 → 21000 tokens) ──", "[10:04:00] ── interrupted ──"]
+
+
+def test_transcript_agent_call_names_subagent(tmp_path, capsys):
+    log = Log().prompt().call("Agent", {"description": "Review axis", "prompt": "long"}, result="report")
+    log.records[-1]["toolUseResult"] = {"agentId": "aedc2fc1", "status": "completed"}
+    log.user([{"type": "text", "text": "Base directory for this skill: C:\\skills\\grilling\n\n# grilling"}],
+             isMeta=True)
+    out = transcript(tmp_path, capsys, log)[1].splitlines()
+    assert "[10:02:00] #1 Agent Review axis → agent aedc2fc1" in out
+    assert "[10:04:00] skill grilling (3 lines)" in out                # a Windows path, as a Skill call leaves it
+
+
+def test_transcript_agent_flag(tmp_path, capsys):
+    log = Log(sid="par-1").prompt().bash("parent-ls")
+    sub = Log(sid="par-1")
+    sub.n = 50
+    sub.prompt("sub task").bash("sub-ls").bash("sub-pwd")
+    base = tmp_path / "projects" / "-work-repo" / "par-1" / "subagents"
+    sub.write(base / "agent-a1.jsonl")
+    (base / "agent-a1.meta.json").write_text(json.dumps({"agentType": "Explore", "description": "find it"}))
+    code, out, err = transcript(tmp_path, capsys, log, "--agent", "a1")
+    lines = out.splitlines()
+    assert (code, err) == (0, "")
+    assert lines[:2] == ["session  par-1", "agent    a1 (Explore: find it)"]
+    assert "[10:02:00] #1 Bash sub-ls" in lines and "[10:04:00] #2 Bash sub-pwd" in lines
+    assert "parent-ls" not in out
+
+
+def test_transcript_unknown_agent_exits_1(tmp_path, capsys):
+    log = Log(sid="par-2").prompt()
+    code, out, err = transcript(tmp_path, capsys, log, "--agent", "zz")
+    assert (code, out, err) == (1, "", "no subagent zz in par-2\n")
+
+
+def test_transcript_range_full(tmp_path, capsys):
+    many = "\n".join(f"r{i}" for i in range(30))
+    log = Log().prompt("before").bash("one", result=many).bash("two\nsecond line", result=many)
+    log.prompt("between").bash("three", result="e\n" * 25, is_error=True).bash("four", result=many)
+    out = transcript(tmp_path, capsys, log, "--from", "2", "--to", "3", "--full")[1].splitlines()
+    body = out[5:]
+    assert body[0] == "[10:04:00] #2 Bash two"
+    assert body[1:33] == ["  > second line", *[f"  r{i}" for i in range(30)], "[10:06:00] user"]
+    assert body[34] == "[10:07:00] #3 Bash three error"
+    assert body[35:] == ["  e"] * 25
+    cut = transcript(tmp_path, capsys, log, "--from", "4")[1].splitlines()[5:]
+    assert cut[0] == "[10:09:00] #4 Bash four" and "  … 24 lines …" in cut
+
+
+def test_transcript_lines_flag(tmp_path, capsys):
+    log = Log().prompt()
+    think(log, "a\nb\nc\nd")
+    log.bash("seq", result="\n".join(str(i) for i in range(1, 11)))
+    out = transcript(tmp_path, capsys, log, "--lines", "1")[1].splitlines()[7:]
+    assert out == ["[10:02:00] thinking (+3 lines)", "  a", "[10:03:00] #1 Bash seq", "  1", "  … 8 lines …", "  10"]
+
+
+def test_transcript_relayed_user_records_and_harness_output(tmp_path, capsys):
+    log = Log().prompt()
+    log.user("<local-command-stdout>hi</local-command-stdout>")
+    log.user("<bash-stdout>x</bash-stdout><bash-stderr></bash-stderr>")
+    log.user([{"type": "text", "text": "Another Claude session sent a message:\n<agent-message>r1\nr2</agent-message>"}],
+             isMeta=True, origin={"kind": "peer", "from": "a7"})
+    log.user("<task-notification>\n<task-id>t42</task-id>\n<status>completed</status>\n</task-notification>",
+             origin={"kind": "task-notification"})
+    attach(log, "queued_command", prompt="<task-notification>\n<task-id>t9</task-id>\n</task-notification>",
+           commandMode="task-notification", origin={"kind": "task-notification"})
+    out = transcript(tmp_path, capsys, log)[1].splitlines()[7:]
+    assert out == ["[10:04:00] hand-back from agent a7 (3 lines)", "[10:05:00] task notification t42 (4 lines)",
+                   "[10:06:00] task notification t9 (3 lines)"]
+
+
+def test_transcript_unreadable_logs_exit_1(tmp_path, capsys):
+    (tmp_path / "projects" / "-p").mkdir(parents=True)
+    (tmp_path / "projects" / "-p" / "bad-1.jsonl").write_text("not json\n")
+    code, out, err = run(capsys, "--config", str(config(tmp_path)), "transcript", "bad-1",
+                         "--projects", str(tmp_path / "projects"))
+    assert (code, out) == (1, "")
+    assert err == f"not a session log: bad-1\n"

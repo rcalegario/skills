@@ -10,6 +10,11 @@ disable-model-invocation: true
 
 - No argument: run `extract`. It reads every session log under `~/.claude/projects/` and writes `<out>/<YYYY-MM-DD>/<session-id>.yaml` for each one whose file is missing or older than its log (the date is the session's local start date).
 - Log paths as arguments: run `extract <logs>`, which writes those files whatever their age.
+- Session ids (or unique prefixes) as arguments: run `extract <ids>`, which writes each file when missing or older than its logs. An id that matches no log, or a prefix that matches several, exits 1 with one line.
+
+`--print-path` prints only the path of each named session's file, one per line, so another skill can read a session's metrics on demand: `extract <id> --print-path`.
+
+`transcript <id>` prints a session's conversation in a compact form, for an agent to read the whole session: a header (session, project, span, metrics file), then prompts and agent text whole, thinking and call results cut, each call as `#n` with the number the session file uses, and skills, compactions, interruptions and subagents in one line each. `--from N --to M --full` reads calls N to M untruncated, `--agent <id>` reads a subagent (its id is on the `→ agent` line), `--lines N` keeps more of each cut; an error result always keeps its first 20 lines.
 
 A SessionEnd hook (`extract --hook`, set up by the repo's SETUP.md) writes each session's file when it ends, so a run by hand only catches what the hook missed.
 
